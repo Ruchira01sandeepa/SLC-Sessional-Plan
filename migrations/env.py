@@ -22,7 +22,7 @@ from app.config import settings
 from app.db import Base
 from app import models  # noqa: F401  (register all tables)
 
-config.set_main_option("sqlalchemy.url", settings.database_url)
+config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))  # configparser treats % specially
 target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,

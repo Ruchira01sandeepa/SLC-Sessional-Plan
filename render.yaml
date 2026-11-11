@@ -1,0 +1,27 @@
+# Render Blueprint: one free web service. The database is external (Neon Postgres, free), because a
+# free Render instance's disk is wiped on every restart/deploy, so SQLite would lose all data.
+# Free instances have no pre-deploy step or shell, so migrations and template seeding run at start-up
+# (both are safe to repeat: alembic skips applied migrations, the seeder skips existing rows).
+services:
+  - type: web
+    name: slc-sessional-plan
+    runtime: python
+    plan: free
+    branch: main
+    autoDeploy: true
+    buildCommand: pip install -r requirements.txt
+    startCommand: >-
+      alembic upgrade head &&
+      python -m scripts.seed_templates &&
+      uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips "*"
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.10.15"
+      # Paste these three when Render asks (sync: false = entered by hand, never stored in the repo).
+      - key: SLC_DATABASE_URL     # Neon connection string (postgresql://...?sslmode=require)
+        sync: false
+      - key: SLC_JWT_SECRET       # long random string (48+ characters)
+        sync: false
+      - key: SLC_MEDICAL_KEY      # Fernet key - KEEP A BACKUP, without it medical records cannot be read
+        sync: false

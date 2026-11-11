@@ -10,6 +10,16 @@ class Settings(BaseSettings):
     # SQLite for local dev; use e.g. postgresql+psycopg://user:pw@host/db in production.
     database_url: str = "sqlite:///./slc_u15.db"
 
+    @field_validator("database_url")
+    @classmethod
+    def _sqlalchemy_url(cls, v: str) -> str:
+        # Hosts (Neon, Render, Heroku...) hand out postgres:// or postgresql:// URLs; SQLAlchemy needs the driver named.
+        v = v.strip()
+        for prefix in ("postgres://", "postgresql://"):
+            if v.startswith(prefix):
+                return "postgresql+psycopg://" + v[len(prefix):]
+        return v
+
     # JWT signing key. MUST be overridden in production.
     jwt_secret: str = "dev-only-change-me-dev-only-change-me"
     jwt_algorithm: str = "HS256"

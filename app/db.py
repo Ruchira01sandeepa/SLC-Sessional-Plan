@@ -7,6 +7,7 @@ _is_sqlite = settings.database_url.startswith("sqlite")
 engine = create_engine(
     settings.database_url,
     connect_args={"check_same_thread": False} if _is_sqlite else {},
+    pool_pre_ping=not _is_sqlite,          # hosted Postgres (e.g. Neon) closes idle connections; check before use
 )
 
 if _is_sqlite:
