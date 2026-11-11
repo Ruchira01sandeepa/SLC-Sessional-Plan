@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#90caf9">
+<title>SLC Junior Player Development</title>
+<link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+<header id="top" hidden>
+  <div class="brand"><span class="mark">U15</span><span class="brand-name">Player Development<span class="brand-sub">Sri Lanka Cricket</span></span></div>
+  <div class="row top-actions"><select id="squad" aria-label="Squad"></select>
+    <div class="user"><span id="avatar" class="avatar" aria-hidden="true"></span><span class="user-text"><span id="who"></span><span id="who-role"></span></span></div>
+    <button id="logout" class="ghost small">Sign out</button></div>
+</header>
+<nav id="tabs" hidden></nav>
+<main id="main" aria-live="polite"></main>
+<div id="toast" role="status"></div>
+<script src="charts.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

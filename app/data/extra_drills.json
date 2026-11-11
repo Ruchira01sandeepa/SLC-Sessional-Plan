@@ -1,0 +1,41 @@
+{
+  "_about": "Batting and wicketkeeping drills ADDED to the supplied exercise list (which has none). Standard junior coaching drills; coaches review and edit. Kinds use the same phase rules as every other drill (app/exercise_kinds.py).",
+  "groups": {
+    "batting": {
+      "physical": [],
+      "skill": [
+        {"name": "Shadow batting: grip, stance and trigger", "purpose": "Grooves a relaxed grip, balanced stance and small trigger movement", "areas": "Balance, set-up, bat path", "kind": "foundation"},
+        {"name": "Balance-and-hold drill off throw-downs", "purpose": "Holds the finish for two seconds to build head position and balance", "areas": "Balance, head position, bat swing", "kind": "foundation"},
+        {"name": "Front-foot drive drill off throw-downs", "purpose": "Full front-foot stride, head over the ball, weight transfer forward", "areas": "Front-foot weight transfer, straight bat", "kind": "foundation"},
+        {"name": "Back-foot defence and punch drill", "purpose": "Back and across, playing late under the eyes", "areas": "Back-foot weight transfer, playing late", "kind": "foundation"},
+        {"name": "Side-arm throw-downs against pace", "purpose": "Repetition against quicker deliveries with soft hands", "areas": "Batting to pace, timing", "kind": "foundation"},
+        {"name": "Use-of-feet drill against spin", "purpose": "Coming down the track to the pitch of the ball, or going right back", "areas": "Batting to spin, footwork", "kind": "foundation"},
+        {"name": "Soft-hands defence drill against spin", "purpose": "Plays late with soft hands to avoid bat-pad catches", "areas": "Batting to spin, defence", "kind": "foundation"},
+        {"name": "Pull and hook drill with tennis balls", "purpose": "Safe short-ball play: inside the line, roll the wrists, keep it down", "areas": "Back-foot strokes, short ball", "kind": "variation"},
+        {"name": "Cut-shot drill", "purpose": "Uses width: back and across, arms extended, hit down", "areas": "Back-foot strokes, off side", "kind": "variation"},
+        {"name": "Sweep and paddle drill against spin", "purpose": "Adds sweep options with a stable base and head over the ball", "areas": "Batting to spin, range", "kind": "variation"},
+        {"name": "Range-hitting drill: hitting zones", "purpose": "Clears the front leg, full swing, hits to planned boundary zones", "areas": "Boundary hitting, power", "kind": "variation"},
+        {"name": "Rotate-the-strike drill: gaps and singles", "purpose": "Finds gaps with soft hands and turns dot balls into singles", "areas": "Strike rotation, decision making", "kind": "match_prep"},
+        {"name": "Running between the wickets and calling drill", "purpose": "Clear calls, backing up, turning quickly for twos", "areas": "Run judgement, calling", "kind": "match_prep"},
+        {"name": "Scenario batting: chase a target in set overs", "purpose": "Pressure practice: plan the innings, manage risk", "areas": "Game awareness, decision making", "kind": "match_prep"},
+        {"name": "Batting game-plan drill against a set field", "purpose": "Plans scoring options for a given field and bowler", "areas": "Format knowledge, tactical adaptability", "kind": "tactical"},
+        {"name": "Batting video review", "purpose": "Compares set-up, trigger and strokes with the coach's model", "areas": "Technique awareness", "kind": "analysis"}
+      ]
+    },
+    "keeping": {
+      "physical": [],
+      "skill": [
+        {"name": "Keeper stance and ready-position drill", "purpose": "Low, balanced stance with weight on the balls of the feet", "areas": "Set-up, balance", "kind": "foundation"},
+        {"name": "Clean-takes drill: gloves together, soft hands", "purpose": "Repeats clean takes with fingers down and gloves giving with the ball", "areas": "Clean takes, hands", "kind": "foundation"},
+        {"name": "Standing-up drill to spin with stumping", "purpose": "Stays down, takes cleanly and breaks the stumps in one movement", "areas": "Up to the stumps, stumping", "kind": "foundation"},
+        {"name": "Standing-back footwork drill to pace", "purpose": "Moves early with side steps and takes on the inside hip", "areas": "Back from the stumps, footwork", "kind": "foundation"},
+        {"name": "Lateral diving-take drill on a soft surface", "purpose": "Explosive push off and safe landing for wide takes", "areas": "Agility left and right, diving", "kind": "catching"},
+        {"name": "Leg-side take drill", "purpose": "Moves early down the leg side and keeps the head still", "areas": "Leg-side takes, footwork", "kind": "variation"},
+        {"name": "Reaction-ball takes", "purpose": "Unpredictable bounce trains fast hands and focus", "areas": "Reaction, clean takes", "kind": "variation"},
+        {"name": "Run-out take and break-the-stumps drill", "purpose": "Gets to the stumps fast and takes throws in front of them", "areas": "Run-outs, fielding leadership", "kind": "match_prep"},
+        {"name": "Keeper communication and field-leadership drill", "purpose": "Calls for catches, sets energy and talks to bowler and fielders", "areas": "Fielding leader, communication", "kind": "tactical"},
+        {"name": "Keeping video review", "purpose": "Checks stance, head position and glove work against the coach's model", "areas": "Technique awareness", "kind": "analysis"}
+      ]
+    }
+  }
+}

@@ -1,0 +1,42 @@
+"""Workload screens in the browser (admin-only server on :8765, demo data).  python -m scripts.ui_smoke_workload /out/dir"""
+import re, sys
+from playwright.sync_api import sync_playwright
+BASE = "http://localhost:8765/ui/"; SCR = sys.argv[1]; problems = []
+with sync_playwright() as p:
+    b = p.chromium.launch()
+    page = b.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2).new_page()
+    page.on("console", lambda m: m.type == "error" and problems.append(("console", m.text)))
+    page.on("pageerror", lambda e: problems.append(("pageerror", str(e))))
+    page.goto(BASE); page.fill("input[type=email]", "admin@demo.slc.lk"); page.fill("input[type=password]", "Demo-Pass-2026")
+    page.click("form button[type=submit]"); page.wait_for_selector("#tabs button")
+    print("tabs:", page.locator("#tabs button").all_inner_texts())
+    page.click("#tabs button:has-text('Workload')"); page.wait_for_selector("text=Squad overview")
+    print("overview rows:", page.locator("tbody tr").count())
+    page.click("tr.click:has-text('Fast')"); page.wait_for_selector("text=Weekly load, last 8 weeks")
+    name = page.inner_text("h1"); print("player:", name)
+    page.click("button:has-text('Log session')"); page.wait_for_selector("text=Log session –")
+    page.fill("input[type=number] >> nth=0", "60"); page.fill("input[type=number] >> nth=1", "7")
+    over = page.locator("input[step='0.1']")
+    if over.count():
+        over.first.fill("7.0"); page.fill("input[placeholder*='e.g. 4']", "7")
+    page.screenshot(path=f"{SCR}/w1_form.png", full_page=True)
+    page.click("button:has-text('Check')") if False else None
+    page.click("button:has-text('Save session')"); page.wait_for_selector("text=Weekly load, last 8 weeks")
+    txt = page.inner_text("main"); print("alert shown:", "above the 5-over spell limit" in txt, "| recent row:", "Recent sessions" in txt)
+    page.screenshot(path=f"{SCR}/w2_player.png", full_page=True)
+    page.click("button:has-text('Daily wellness')"); page.wait_for_selector("text=Daily wellness –")
+    page.fill("input[type=number] >> nth=0", "9"); page.click("button:has-text('Save')"); page.wait_for_selector("text=Weekly load, last 8 weeks")
+    print("wellness alert:", "High soreness" in page.inner_text("main"))
+    page.click("button:has-text('Check a planned session')"); page.wait_for_selector("text=Check a planned session –")
+    page.fill("input[type=number] >> nth=0", "60"); page.fill("input[type=number] >> nth=1", "5"); page.click("button:has-text('Check')")
+    page.wait_for_selector("text=Nothing was saved"); print("check result:", page.inner_text("form p").strip()[:60] if False else "shown")
+    page.click("button:has-text('Cancel')"); page.wait_for_selector("text=Weekly load, last 8 weeks")
+    page.click("button:has-text('Bowling limits')"); page.wait_for_selector("text=Bowling limits –")
+    page.locator("input[type=number] >> nth=0").fill("4"); page.click("button:has-text('Save limits')"); page.wait_for_selector("text=Weekly load, last 8 weeks")
+    print("limit applied:", "4 per spell" in page.inner_text("main"))
+    page.click("#tabs button:has-text('Workload')"); page.wait_for_selector("text=Open alerts")
+    page.click("button:has-text('Mark seen') >> nth=0"); page.wait_for_selector("text=(seen)"); print("acknowledged")
+    page.screenshot(path=f"{SCR}/w3_overview.png", full_page=True)
+    for w in re.findall(r"\b(null|undefined|NaN|\[object Object\])\b", page.inner_text("main")): problems.append(("junk", w))
+    print("overflow px:", page.evaluate("document.documentElement.scrollWidth - window.innerWidth"))
+    print("problems:", problems or "none"); b.close()

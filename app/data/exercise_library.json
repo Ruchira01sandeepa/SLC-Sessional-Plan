@@ -1,0 +1,843 @@
+{
+ "groups": {
+  "spin": {
+   "physical": [
+    {
+     "name": "Plank",
+     "purpose": "Builds trunk endurance for a repeatable bowling action",
+     "areas": "Core, lower-back control",
+     "kind": "trunk_stability"
+    },
+    {
+     "name": "Side plank",
+     "purpose": "Builds lateral trunk strength",
+     "areas": "Obliques, hip stability",
+     "kind": "trunk_stability"
+    },
+    {
+     "name": "Pallof press with band",
+     "purpose": "Develops anti-rotation control",
+     "areas": "Core, obliques, lower-back stability",
+     "kind": "trunk_stability"
+    },
+    {
+     "name": "Medicine-ball rotational throw",
+     "purpose": "Develops rotational power for spin delivery",
+     "areas": "Core, obliques, shoulder power",
+     "kind": "rotation_power"
+    },
+    {
+     "name": "Cable or band woodchop",
+     "purpose": "Develops controlled rotation",
+     "areas": "Core, hips, shoulders",
+     "kind": "rotation_power"
+    },
+    {
+     "name": "Single-leg balance",
+     "purpose": "Improves stability at delivery",
+     "areas": "Ankle, knee, hip control",
+     "kind": "mobility_balance"
+    },
+    {
+     "name": "Single-leg Romanian deadlift",
+     "purpose": "Develops balance and posterior-chain strength",
+     "areas": "Hamstrings, glutes, balance",
+     "kind": "leg_strength"
+    },
+    {
+     "name": "Glute bridge",
+     "purpose": "Strengthens hips and protects lower back",
+     "areas": "Glutes, hamstrings, core",
+     "kind": "leg_strength"
+    },
+    {
+     "name": "Split squat",
+     "purpose": "Builds single-leg strength for bowling action",
+     "areas": "Quads, glutes, balance",
+     "kind": "leg_strength"
+    },
+    {
+     "name": "Walking lunge",
+     "purpose": "Develops leg strength and control",
+     "areas": "Legs, glutes, hip mobility",
+     "kind": "leg_strength"
+    },
+    {
+     "name": "Calf raises",
+     "purpose": "Builds calf strength for repeated delivery strides",
+     "areas": "Calves, ankle strength",
+     "kind": "lower_limb_resilience"
+    },
+    {
+     "name": "Finger and wrist strengthening, e.g. rice bucket or stress-ball squeezes",
+     "purpose": "Develops grip and finger strength for spin",
+     "areas": "Fingers, wrist, forearm",
+     "kind": "grip_wrist"
+    },
+    {
+     "name": "Wrist roller",
+     "purpose": "Builds wrist and forearm endurance",
+     "areas": "Wrist strength, grip",
+     "kind": "grip_wrist"
+    },
+    {
+     "name": "Band shoulder external rotation",
+     "purpose": "Protects the bowling shoulder",
+     "areas": "Rotator cuff, shoulder stability",
+     "kind": "shoulder_prehab"
+    },
+    {
+     "name": "Band shoulder internal rotation",
+     "purpose": "Balances shoulder strength",
+     "areas": "Rotator cuff, shoulder control",
+     "kind": "shoulder_prehab"
+    },
+    {
+     "name": "Band pull-apart",
+     "purpose": "Improves shoulder-blade control",
+     "areas": "Upper back, posture, shoulder stability",
+     "kind": "shoulder_prehab"
+    },
+    {
+     "name": "Thoracic rotation drill",
+     "purpose": "Improves upper-body rotation for bowling",
+     "areas": "Spine mobility, shoulder turn",
+     "kind": "mobility_balance"
+    },
+    {
+     "name": "Hip mobility drill, e.g. 90/90 hip switch",
+     "purpose": "Improves alignment and follow-through",
+     "areas": "Hip mobility, balance",
+     "kind": "mobility_balance"
+    },
+    {
+     "name": "Controlled landing drill",
+     "purpose": "Develops safe landing after delivery",
+     "areas": "Knee control, balance, deceleration",
+     "kind": "landing"
+    },
+    {
+     "name": "Easy aerobic running, 15–20 min",
+     "purpose": "Builds recovery capacity",
+     "areas": "Aerobic endurance, recovery",
+     "kind": "aerobic"
+    },
+    {
+     "name": "Shuttle runs, low volume",
+     "purpose": "Develops fielding and repeat-effort capacity",
+     "areas": "Repeated sprint ability, agility",
+     "kind": "repeat_sprint"
+    }
+   ],
+   "skill": [
+    {
+     "name": "Grip and release drill",
+     "purpose": "Develops correct finger position and release",
+     "areas": "Grip, spin, control",
+     "kind": "foundation"
+    },
+    {
+     "name": "Shadow bowling",
+     "purpose": "Develops action without full-intensity bowling",
+     "areas": "Action, rhythm, balance",
+     "kind": "foundation"
+    },
+    {
+     "name": "Single-stump target bowling",
+     "purpose": "Develops line accuracy",
+     "areas": "Line control, concentration",
+     "kind": "foundation"
+    },
+    {
+     "name": "Good-length target zone drill",
+     "purpose": "Develops consistent length",
+     "areas": "Length control, decision-making",
+     "kind": "foundation"
+    },
+    {
+     "name": "Cone target drill",
+     "purpose": "Develops accurate stock ball",
+     "areas": "Accuracy, consistency",
+     "kind": "foundation"
+    },
+    {
+     "name": "Stock-ball repetition drill",
+     "purpose": "Develops a reliable primary delivery",
+     "areas": "Control, rhythm, confidence",
+     "kind": "foundation"
+    },
+    {
+     "name": "Top-spinner drill",
+     "purpose": "Develops overspin and dip",
+     "areas": "Variation, trajectory, control",
+     "kind": "variation"
+    },
+    {
+     "name": "Arm-ball or slider drill",
+     "purpose": "Develops a straighter variation",
+     "areas": "Variation, disguise",
+     "kind": "variation"
+    },
+    {
+     "name": "Googly or flipper drill, only where technically ready",
+     "purpose": "Develops advanced variation",
+     "areas": "Wrist work, disguise, confidence",
+     "kind": "variation"
+    },
+    {
+     "name": "Drift-and-dip drill",
+     "purpose": "Develops ball movement in the air",
+     "areas": "Flight, drift, control",
+     "kind": "variation"
+    },
+    {
+     "name": "Turn-and-bounce drill",
+     "purpose": "Develops spin off the pitch",
+     "areas": "Spin, bounce, wrist/finger action",
+     "kind": "variation"
+    },
+    {
+     "name": "Crease-position drill",
+     "purpose": "Develops angles from over and around the wicket",
+     "areas": "Angle variation, tactical awareness",
+     "kind": "tactical"
+    },
+    {
+     "name": "Right-hand batter plan drill",
+     "purpose": "Develops plans against right-handers",
+     "areas": "Tactics, field awareness",
+     "kind": "tactical"
+    },
+    {
+     "name": "Left-hand batter plan drill",
+     "purpose": "Develops plans against left-handers",
+     "areas": "Tactics, field awareness",
+     "kind": "tactical"
+    },
+    {
+     "name": "Field-setting discussion and practice",
+     "purpose": "Develops bowling to a planned field",
+     "areas": "Tactics, communication",
+     "kind": "tactical"
+    },
+    {
+     "name": "Middle-overs control drill",
+     "purpose": "Develops dot balls and pressure building",
+     "areas": "Accuracy, patience, game awareness",
+     "kind": "tactical"
+    },
+    {
+     "name": "Wicket-taking scenario drill",
+     "purpose": "Develops planned wicket-taking deliveries",
+     "areas": "Variations, tactics, decision-making",
+     "kind": "tactical"
+    },
+    {
+     "name": "Pressure-over drill",
+     "purpose": "Develops bowling under match pressure",
+     "areas": "Mental skills, accuracy, composure",
+     "kind": "match_prep"
+    },
+    {
+     "name": "Video-analysis review",
+     "purpose": "Improves technical understanding",
+     "areas": "Self-awareness, action correction",
+     "kind": "analysis"
+    }
+   ]
+  },
+  "fast": {
+   "physical": [
+    {
+     "name": "Split squat",
+     "purpose": "Builds single-leg strength for run-up and delivery",
+     "areas": "Quads, glutes, balance",
+     "kind": "leg_strength"
+    },
+    {
+     "name": "Bulgarian split squat, bodyweight or light load",
+     "purpose": "Develops stronger single-leg strength",
+     "areas": "Quads, glutes, hip stability",
+     "kind": "leg_strength"
+    },
+    {
+     "name": "Walking lunge",
+     "purpose": "Develops leg strength and coordination",
+     "areas": "Legs, glutes, balance",
+     "kind": "leg_strength"
+    },
+    {
+     "name": "Romanian deadlift, light dumbbell or band",
+     "purpose": "Strengthens hamstrings and hips",
+     "areas": "Hamstrings, glutes, lower-back control",
+     "kind": "leg_strength"
+    },
+    {
+     "name": "Single-leg Romanian deadlift",
+     "purpose": "Develops balance and hamstring control",
+     "areas": "Hamstrings, balance, hip stability",
+     "kind": "leg_strength"
+    },
+    {
+     "name": "Glute bridge",
+     "purpose": "Strengthens hips and protects lower back",
+     "areas": "Glutes, hamstrings, core",
+     "kind": "leg_strength"
+    },
+    {
+     "name": "Nordic hamstring curl, assisted",
+     "purpose": "Builds hamstring injury resilience",
+     "areas": "Hamstrings",
+     "kind": "lower_limb_resilience"
+    },
+    {
+     "name": "Calf raises",
+     "purpose": "Strengthens calves for run-up and landing",
+     "areas": "Calves, Achilles resilience",
+     "kind": "lower_limb_resilience"
+    },
+    {
+     "name": "Broad jump",
+     "purpose": "Develops horizontal power for run-up",
+     "areas": "Glutes, hamstrings, leg power",
+     "kind": "plyometric_power"
+    },
+    {
+     "name": "Countermovement jump",
+     "purpose": "Develops vertical power",
+     "areas": "Leg power, jump height",
+     "kind": "plyometric_power"
+    },
+    {
+     "name": "Bounding",
+     "purpose": "Develops elastic power and stride strength",
+     "areas": "Calves, hamstrings, sprint power",
+     "kind": "plyometric_power"
+    },
+    {
+     "name": "Power skips",
+     "purpose": "Develops forceful running mechanics",
+     "areas": "Hip power, sprint mechanics",
+     "kind": "plyometric_power"
+    },
+    {
+     "name": "Medicine-ball rotational throw",
+     "purpose": "Develops rotational bowling power",
+     "areas": "Core, obliques, shoulders",
+     "kind": "rotation_power"
+    },
+    {
+     "name": "Medicine-ball overhead slam",
+     "purpose": "Develops full-body power",
+     "areas": "Core, shoulders, coordination",
+     "kind": "rotation_power"
+    },
+    {
+     "name": "Push-up",
+     "purpose": "Builds upper-body strength",
+     "areas": "Chest, shoulders, triceps, core",
+     "kind": "upper_strength"
+    },
+    {
+     "name": "Band row",
+     "purpose": "Develops pulling strength and posture",
+     "areas": "Upper back, lats, rear shoulders",
+     "kind": "upper_strength"
+    },
+    {
+     "name": "Pull-up or assisted pull-up",
+     "purpose": "Builds back and grip strength",
+     "areas": "Back, biceps, grip",
+     "kind": "upper_strength"
+    },
+    {
+     "name": "Farmer carry",
+     "purpose": "Builds grip, posture, and trunk stability",
+     "areas": "Grip, forearms, core",
+     "kind": "upper_strength"
+    },
+    {
+     "name": "Plank",
+     "purpose": "Builds trunk endurance",
+     "areas": "Core, lower-back control",
+     "kind": "trunk_stability"
+    },
+    {
+     "name": "Side plank",
+     "purpose": "Builds lateral trunk strength",
+     "areas": "Obliques, hip stability",
+     "kind": "trunk_stability"
+    },
+    {
+     "name": "Pallof press with band",
+     "purpose": "Develops anti-rotation control",
+     "areas": "Core, lower-back stability",
+     "kind": "trunk_stability"
+    },
+    {
+     "name": "Band shoulder external rotation",
+     "purpose": "Protects the bowling shoulder",
+     "areas": "Rotator cuff, shoulder stability",
+     "kind": "shoulder_prehab"
+    },
+    {
+     "name": "Band shoulder internal rotation",
+     "purpose": "Balances shoulder strength",
+     "areas": "Rotator cuff, shoulder control",
+     "kind": "shoulder_prehab"
+    },
+    {
+     "name": "Band pull-apart",
+     "purpose": "Improves shoulder-blade control",
+     "areas": "Upper back, posture",
+     "kind": "shoulder_prehab"
+    },
+    {
+     "name": "Wall slide",
+     "purpose": "Improves shoulder mobility",
+     "areas": "Shoulder mobility, posture",
+     "kind": "shoulder_prehab"
+    },
+    {
+     "name": "Controlled landing drill",
+     "purpose": "Teaches safe landing after delivery",
+     "areas": "Knee control, ankle stability",
+     "kind": "landing"
+    },
+    {
+     "name": "10 m acceleration sprint",
+     "purpose": "Develops run-up acceleration",
+     "areas": "Acceleration, leg power",
+     "kind": "speed"
+    },
+    {
+     "name": "20 m sprint",
+     "purpose": "Develops run-up speed",
+     "areas": "Sprint speed, mechanics",
+     "kind": "speed"
+    },
+    {
+     "name": "Easy aerobic running",
+     "purpose": "Builds recovery capacity",
+     "areas": "Aerobic endurance, recovery",
+     "kind": "aerobic"
+    }
+   ],
+   "skill": [
+    {
+     "name": "Run-up rhythm drill",
+     "purpose": "Develops smooth, repeatable run-up",
+     "areas": "Rhythm, acceleration, balance",
+     "kind": "foundation"
+    },
+    {
+     "name": "Run-up and gather drill",
+     "purpose": "Develops approach and gathering technique",
+     "areas": "Coordination, momentum, alignment",
+     "kind": "foundation"
+    },
+    {
+     "name": "Shadow bowling",
+     "purpose": "Develops action without high workload",
+     "areas": "Action, alignment, balance",
+     "kind": "foundation"
+    },
+    {
+     "name": "Target bowling to single stump",
+     "purpose": "Develops line accuracy",
+     "areas": "Line control, concentration",
+     "kind": "foundation"
+    },
+    {
+     "name": "Good-length target zone drill",
+     "purpose": "Develops consistent length",
+     "areas": "Length control, decision-making",
+     "kind": "foundation"
+    },
+    {
+     "name": "Cone target drill",
+     "purpose": "Develops accurate stock delivery",
+     "areas": "Accuracy, consistency",
+     "kind": "foundation"
+    },
+    {
+     "name": "Seam-position drill",
+     "purpose": "Develops seam presentation",
+     "areas": "Seam control, swing potential",
+     "kind": "foundation"
+    },
+    {
+     "name": "Swing-bowling drill",
+     "purpose": "Develops conventional swing",
+     "areas": "Seam control, wrist position, swing",
+     "kind": "variation"
+    },
+    {
+     "name": "Bounce drill",
+     "purpose": "Develops controlled bounce",
+     "areas": "Length, trajectory, confidence",
+     "kind": "variation"
+    },
+    {
+     "name": "Change-of-pace drill",
+     "purpose": "Develops pace variation",
+     "areas": "Variation, disguise, control",
+     "kind": "variation"
+    },
+    {
+     "name": "Yorker drill",
+     "purpose": "Develops accurate yorkers",
+     "areas": "Accuracy, pressure bowling",
+     "kind": "variation"
+    },
+    {
+     "name": "Slower-ball drill",
+     "purpose": "Develops deception",
+     "areas": "Variation, disguise",
+     "kind": "variation"
+    },
+    {
+     "name": "New-ball bowling drill",
+     "purpose": "Develops early-innings bowling",
+     "areas": "Seam, swing, field awareness",
+     "kind": "tactical"
+    },
+    {
+     "name": "Old-ball bowling drill",
+     "purpose": "Develops reverse swing and control",
+     "areas": "Seam control, tactics",
+     "kind": "tactical"
+    },
+    {
+     "name": "Death-over bowling drill",
+     "purpose": "Develops yorkers and wide-yorker control",
+     "areas": "Accuracy, pressure control",
+     "kind": "tactical"
+    },
+    {
+     "name": "Field-setting awareness drill",
+     "purpose": "Develops bowling to a field",
+     "areas": "Tactics, communication",
+     "kind": "tactical"
+    },
+    {
+     "name": "Wicket-taking scenario drill",
+     "purpose": "Develops planned wicket-taking deliveries",
+     "areas": "Variations, tactics, decision-making",
+     "kind": "tactical"
+    },
+    {
+     "name": "Controlled net bowling with workload cap",
+     "purpose": "Develops match-ready bowling safely",
+     "areas": "Accuracy, rhythm, workload tolerance",
+     "kind": "match_prep"
+    },
+    {
+     "name": "Video-analysis review",
+     "purpose": "Improves action and tactical understanding",
+     "areas": "Self-awareness, technique correction",
+     "kind": "analysis"
+    }
+   ]
+  },
+  "fielding": {
+   "physical": [
+    {
+     "name": "Lateral shuffle",
+     "purpose": "Develops side-to-side fielding movement",
+     "areas": "Lateral speed, groin strength",
+     "kind": "agility"
+    },
+    {
+     "name": "Pro-agility drill",
+     "purpose": "Develops rapid change of direction",
+     "areas": "Agility, deceleration, knee control",
+     "kind": "agility"
+    },
+    {
+     "name": "Three-cone drill",
+     "purpose": "Develops multidirectional movement",
+     "areas": "Agility, balance, coordination",
+     "kind": "agility"
+    },
+    {
+     "name": "T-drill",
+     "purpose": "Develops forward, lateral, and backward movement",
+     "areas": "Fielding agility, body control",
+     "kind": "agility"
+    },
+    {
+     "name": "Zig-zag cone drill",
+     "purpose": "Develops reactive movement",
+     "areas": "Agility, knee control",
+     "kind": "agility"
+    },
+    {
+     "name": "Ladder drills",
+     "purpose": "Develops quick feet and coordination",
+     "areas": "Footwork, coordination",
+     "kind": "agility"
+    },
+    {
+     "name": "Broad jump",
+     "purpose": "Develops explosive movement",
+     "areas": "Leg power, sprint power",
+     "kind": "plyometric_power"
+    },
+    {
+     "name": "Countermovement jump",
+     "purpose": "Develops vertical power for catching and jumping",
+     "areas": "Leg power, jump height",
+     "kind": "plyometric_power"
+    },
+    {
+     "name": "Single-leg hop",
+     "purpose": "Develops balance and unilateral power",
+     "areas": "Ankle, knee, hip stability",
+     "kind": "plyometric_power"
+    },
+    {
+     "name": "Box jump, low box",
+     "purpose": "Develops safe explosive jumping and landing",
+     "areas": "Leg power, landing mechanics",
+     "kind": "plyometric_power"
+    },
+    {
+     "name": "Medicine-ball chest pass",
+     "purpose": "Develops throwing power",
+     "areas": "Chest, shoulders, triceps",
+     "kind": "rotation_power"
+    },
+    {
+     "name": "Medicine-ball rotational throw",
+     "purpose": "Develops rotational throwing power",
+     "areas": "Core, obliques, shoulders",
+     "kind": "rotation_power"
+    },
+    {
+     "name": "Band pull-apart",
+     "purpose": "Strengthens upper back and shoulder stabilizers",
+     "areas": "Rear shoulders, posture, throwing durability",
+     "kind": "shoulder_prehab"
+    },
+    {
+     "name": "Band external rotation",
+     "purpose": "Protects the throwing shoulder",
+     "areas": "Rotator cuff, shoulder stability",
+     "kind": "shoulder_prehab"
+    },
+    {
+     "name": "Band internal rotation",
+     "purpose": "Balances shoulder strength",
+     "areas": "Rotator cuff, shoulder control",
+     "kind": "shoulder_prehab"
+    },
+    {
+     "name": "Push-up",
+     "purpose": "Builds upper-body strength",
+     "areas": "Chest, shoulders, triceps, core",
+     "kind": "upper_strength"
+    },
+    {
+     "name": "Band row",
+     "purpose": "Develops pulling strength and posture",
+     "areas": "Upper back, lats, rear shoulders",
+     "kind": "upper_strength"
+    },
+    {
+     "name": "Plank",
+     "purpose": "Builds trunk endurance",
+     "areas": "Core, lower-back control",
+     "kind": "trunk_stability"
+    },
+    {
+     "name": "Side plank",
+     "purpose": "Builds lateral trunk strength",
+     "areas": "Obliques, hip stability",
+     "kind": "trunk_stability"
+    },
+    {
+     "name": "Copenhagen plank, easy version",
+     "purpose": "Strengthens groin muscles",
+     "areas": "Adductors, hip stability",
+     "kind": "trunk_stability"
+    },
+    {
+     "name": "Calf raises",
+     "purpose": "Builds calf strength for sprinting and fielding",
+     "areas": "Calves, ankle strength",
+     "kind": "lower_limb_resilience"
+    },
+    {
+     "name": "Controlled landing drill",
+     "purpose": "Teaches safe landing after diving or jumping",
+     "areas": "Knee control, ankle stability",
+     "kind": "landing"
+    },
+    {
+     "name": "Shuttle runs",
+     "purpose": "Develops repeated sprint ability",
+     "areas": "Repeated sprint capacity, endurance",
+     "kind": "repeat_sprint"
+    },
+    {
+     "name": "Reaction sprint drill",
+     "purpose": "Develops quick reaction and acceleration",
+     "areas": "Reaction time, acceleration",
+     "kind": "speed"
+    },
+    {
+     "name": "Dive-and-recover drill on soft surface",
+     "purpose": "Develops safe diving and recovery",
+     "areas": "Confidence, mobility, body control",
+     "kind": "landing"
+    }
+   ],
+   "skill": [
+    {
+     "name": "Basic catching circle",
+     "purpose": "Develops catching technique",
+     "areas": "Hand-eye coordination, concentration",
+     "kind": "catching"
+    },
+    {
+     "name": "Tennis-ball reaction catching",
+     "purpose": "Improves reaction speed",
+     "areas": "Hand speed, visual tracking",
+     "kind": "catching"
+    },
+    {
+     "name": "High-ball catching drill",
+     "purpose": "Develops catches above shoulder height",
+     "areas": "Positioning, catching technique",
+     "kind": "catching"
+    },
+    {
+     "name": "Low-ball ground-fielding drill",
+     "purpose": "Develops clean collection",
+     "areas": "Glove work, body position",
+     "kind": "ground_fielding"
+    },
+    {
+     "name": "Long-barrier drill",
+     "purpose": "Develops stopping hard-hit ground balls",
+     "areas": "Positioning, body control",
+     "kind": "ground_fielding"
+    },
+    {
+     "name": "Underarm flick drill",
+     "purpose": "Develops quick close-range returns",
+     "areas": "Hand speed, accuracy",
+     "kind": "throwing"
+    },
+    {
+     "name": "Overarm throw drill",
+     "purpose": "Develops strong, accurate throwing",
+     "areas": "Throwing technique, arm strength",
+     "kind": "throwing"
+    },
+    {
+     "name": "Stump-hit throw drill",
+     "purpose": "Develops accurate throwing under pressure",
+     "areas": "Accuracy, decision-making",
+     "kind": "throwing"
+    },
+    {
+     "name": "Relay-throw drill",
+     "purpose": "Develops fast team returns",
+     "areas": "Throwing, communication, teamwork",
+     "kind": "throwing"
+    },
+    {
+     "name": "Backing-up drill",
+     "purpose": "Develops support for throws",
+     "areas": "Awareness, positioning",
+     "kind": "fielding_game"
+    },
+    {
+     "name": "Slips and gully catching drill",
+     "purpose": "Develops close catching",
+     "areas": "Reaction time, soft hands",
+     "kind": "catching"
+    },
+    {
+     "name": "Outfield catching drill",
+     "purpose": "Develops catches while moving",
+     "areas": "Positioning, judgement, catching",
+     "kind": "catching"
+    },
+    {
+     "name": "Diving catch drill",
+     "purpose": "Develops safe diving catches",
+     "areas": "Agility, confidence, landing control",
+     "kind": "catching"
+    },
+    {
+     "name": "Run-saving drill",
+     "purpose": "Develops cutting off singles",
+     "areas": "Anticipation, speed, angles",
+     "kind": "fielding_game"
+    },
+    {
+     "name": "Field-placement awareness drill",
+     "purpose": "Develops understanding of field positions",
+     "areas": "Tactics, decision-making",
+     "kind": "tactical"
+    },
+    {
+     "name": "Pressure fielding drill",
+     "purpose": "Develops fielding under fatigue or pressure",
+     "areas": "Concentration, composure, fitness",
+     "kind": "match_prep"
+    },
+    {
+     "name": "Small-sided fielding game",
+     "purpose": "Develops game-like fielding",
+     "areas": "Agility, teamwork, decision-making",
+     "kind": "match_prep"
+    },
+    {
+     "name": "Match-simulation fielding drill",
+     "purpose": "Develops real-match fielding skills",
+     "areas": "Awareness, communication, pressure control",
+     "kind": "match_prep"
+    }
+   ]
+  }
+ },
+ "session_template": [
+  {
+   "part": "Warm-up",
+   "minutes": 10,
+   "what": "jogging, skipping, high knees, leg swings, arm circles, lateral shuffles"
+  },
+  {
+   "part": "Strength",
+   "minutes": 15,
+   "what": "role-based exercises, such as split squats, push-ups, band rows, glute bridges, calf raises"
+  },
+  {
+   "part": "Power or speed",
+   "minutes": 10,
+   "what": "broad jumps, medicine-ball throws, 10 m sprints, or cone drills"
+  },
+  {
+   "part": "Role-specific activity",
+   "minutes": 15,
+   "what": "spin-bowling target drill, fast-bowling controlled net work, fielding circuit, keeping drill, or batting throwdowns"
+  },
+  {
+   "part": "Injury prevention",
+   "minutes": 5,
+   "what": "shoulder band work, side plank, hamstring or groin exercise, balance drill"
+  },
+  {
+   "part": "Cool-down",
+   "minutes": 5,
+   "what": "easy walking, breathing, and gentle stretching"
+  }
+ ],
+ "guidance": [
+  "Keep bowling volumes low and progressive for U15 players, and prioritize controlled technique, landing mechanics, and recovery before intensity."
+ ]
+}
