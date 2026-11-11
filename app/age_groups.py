@@ -50,6 +50,14 @@ PROFILES: dict[str, AgeProfile] = {
         notes=("U17 limits are PLACEHOLDERS, not SLC rules: 6 overs a spell, 18 a match day (caution at 15), 3 bowling days in 7. "
                "They follow published junior fast-bowling guidance for 16-17 year-olds and must be confirmed by SLC before real use.",
                "The U15 test battery is used until an SLC U17 testing SOP is available."), start_load=1100.0),
+    "U19": AgeProfile(
+        code="U19", label="Under 19", min_age=14, max_age=20,
+        fast_limits={"max_spell_overs": 7, "max_match_day_overs": 20, "caution_match_day_overs": 17, "max_bowling_days_week": 3},
+        load_peak=0.95, test_battery="SLC National U15 Physical Testing SOP (used for U19 until an U19 SOP exists)", provisional=True,
+        notes=("U19 limits are PLACEHOLDERS, not SLC rules: 7 overs a spell, 20 a match day (caution at 17), 3 bowling days in 7. "
+               "They follow published junior fast-bowling guidance for 17-19 year-olds and must be confirmed by SLC before real use.",
+               "The U15 test battery is used until an SLC U19 testing SOP is available; results are labelled against U19 age references."),
+        start_load=1300.0),
 }
 DEFAULT = "U15"
 CODES = tuple(PROFILES)

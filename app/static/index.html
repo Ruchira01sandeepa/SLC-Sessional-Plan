@@ -4,10 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<meta name="theme-color" content="#90caf9">
+<meta name="theme-color" content="#0d2b4e">
+<link rel="icon" type="image/png" href="brand/icon.png">
 <title>SLC Junior Player Development</title>
 <link rel="stylesheet" href="app.css">
 <link rel="stylesheet" href="dashboard.css">
+<link rel="stylesheet" href="motion.css">
+<link rel="stylesheet" href="auth.css">
 </head>
 <body>
 <header id="top" hidden>
@@ -17,7 +20,7 @@
     <button id="logout" class="ghost small">Sign out</button></div>
 </header>
 <nav id="tabs" hidden></nav>
-<main id="main" aria-live="polite"></main>
+<main id="main" class="view-enter" aria-live="polite"></main>
 <div id="toast" role="status"></div>
 <script src="charts.js"></script>
 <script src="app.js"></script>

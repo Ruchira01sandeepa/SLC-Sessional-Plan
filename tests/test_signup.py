@@ -123,3 +123,16 @@ def test_token_stops_working_if_account_is_set_back_to_pending(client, db):
     u.approval_status = ApprovalStatus.pending
     db.commit()
     assert client.get("/auth/me", headers=h).status_code == 401
+
+
+def test_branding_serves_the_installed_logo_and_prefers_svg(client):
+    from app.main import BRAND_DIR
+    assert client.get("/branding").json() == {"name": "Sri Lanka Cricket", "logo": "brand/logo.png"}     # the installed crest
+    assert client.get("/ui/brand/logo.png").status_code == 200 and client.get("/ui/brand/icon.png").status_code == 200
+    svg = BRAND_DIR / "logo.svg"
+    assert not svg.exists()
+    svg.write_text('<svg xmlns="http://www.w3.org/2000/svg"/>', encoding="utf-8")
+    try:
+        assert client.get("/branding").json()["logo"] == "brand/logo.svg"                                # a vector version wins
+    finally:
+        svg.unlink()

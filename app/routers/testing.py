@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from .. import categorisation as cz
 from ..db import get_db
 from ..deps import audit, current_user
+from ..age_norms import age_band
 from ..exercises import bowling_types
 from ..individual_plan import build_individual_plan
 from ..individual_plan_excel import build_player_workbook
@@ -111,7 +112,8 @@ def _summary(player: Player, window: str, sess: TestSession | None, cat: dict | 
             r = by_key.get(t["key"])
             bt = BY_KEY[t["key"]]
             tests.append({**t, "trials_display": [(_trial_shown(bt, v) if v is not None else None) for v in
-                                                  ((r.trial_1, r.trial_2, r.trial_3) if r else (None,) * TRIALS)]})
+                                                  ((r.trial_1, r.trial_2, r.trial_3) if r else (None,) * TRIALS)],
+                          "age": age_band(t["key"], t.get("value"), player.squad.age_group if player.squad else None, player.gender.value)})
         areas.append({**a, "tests": tests})
     return {"player_id": player.id, "player": player.full_name, "role": player.role.value, "window": window, "window_label": WINDOW_LABEL[window],
             "level": sess.level if sess else None, "level_label": LEVEL_LABEL[sess.level] if sess else "Not tested",
@@ -143,7 +145,7 @@ def template(squad_id: int, season_id: int, window: str, db: Session = Depends(g
 async def import_results(squad_id: int, request: Request, season_id: int, window: str, confirm: bool = False, filename: str | None = None,
                          db: Session = Depends(get_db), user: User = Depends(current_user)):
     """Body = the .xlsx file as raw bytes. confirm=false previews (nothing saved); confirm=true saves the accepted rows."""
-    authorize_squad(db, user, squad_id, "testing.write")
+    squad = authorize_squad(db, user, squad_id, "testing.write")
     _season(db, squad_id, season_id)
     window = _window(window)
     try:
@@ -157,7 +159,7 @@ async def import_results(squad_id: int, request: Request, season_id: int, window
         raise HTTPException(413, "The file is too large")
     players = {p.id: p.full_name for p in db.scalars(select(Player).where(Player.squad_id == squad_id, Player.is_active))}
     try:
-        parsed = parse_workbook(data, players)
+        parsed = parse_workbook(data, players, squad.age_group)
     except ValueError as e:
         raise HTTPException(422, str(e))
     m = parsed["meta"]
@@ -241,7 +243,8 @@ def _plan(db: Session, user: User, p: Player, season_id: int | None, window: str
     cat = cz.categorise(entries).get(p.id)
     g = _grid(db, user, p.squad_id, season.id)
     ready, summ = _workload(db, p)
-    plan = build_individual_plan(player={"name": p.full_name, "role": p.role.value, "date_of_birth": p.date_of_birth,
+    plan = build_individual_plan(player={"name": p.full_name, "role": p.role.value, "date_of_birth": p.date_of_birth, "gender": p.gender.value,
+                                         "age_group": p.squad.age_group if p.squad else None,
                                          "maturity_status": p.maturity_status.value, "custom_limits": p.workload_limits},
                                  cat=cat, ready=ready, g=g, bowling_types=_bowling(p), workload=summ,
                                  extra=_personal_inputs(db, p, season.id, window, entries))

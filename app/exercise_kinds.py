@@ -49,6 +49,7 @@ KIND_LABEL = {
 
 # Which kinds are used in which phase. Conservative: power and intensity arrive after the base is built;
 # the transition phase has no structured bowling or high-intensity work.
+# In season, strength is maintained (2 sets) and easy aerobic runs support recovery and endurance.
 PHASE_KINDS = {
     "pre_season": ["trunk_stability", "leg_strength", "upper_strength", "shoulder_prehab", "mobility_balance", "grip_wrist",
                    "lower_limb_resilience", "aerobic", "landing", "agility", "foundation", "analysis", "catching",
@@ -58,7 +59,7 @@ PHASE_KINDS = {
                         "foundation", "variation", "tactical", "match_prep", "analysis", "catching", "ground_fielding",
                         "throwing", "fielding_game"],
     "in_season": ["trunk_stability", "shoulder_prehab", "lower_limb_resilience", "mobility_balance", "landing",
-                  "leg_strength", "rotation_power", "speed", "agility", "foundation", "variation", "tactical",
+                  "leg_strength", "upper_strength", "aerobic", "rotation_power", "speed", "agility", "foundation", "variation", "tactical",
                   "match_prep", "analysis", "catching", "throwing", "fielding_game"],
     "transition": ["aerobic", "mobility_balance", "trunk_stability", "shoulder_prehab", "analysis"],
 }

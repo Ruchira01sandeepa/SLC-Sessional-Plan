@@ -13,6 +13,7 @@ from io import BytesIO
 from openpyxl import load_workbook
 
 from .test_battery import ANTHRO, LEVEL_LABEL, LEVELS, TRIALS, best_of, parse_value, tests_for
+from .age_norms import plausible
 
 MAX_BYTES = 2_000_000
 MAX_ROWS = 500
@@ -52,7 +53,7 @@ def _blank(v) -> bool:
     return v is None or (isinstance(v, str) and not v.strip())
 
 
-def parse_workbook(data: bytes, players: dict[int, str]) -> dict:
+def parse_workbook(data: bytes, players: dict[int, str], age_group: str | None = None) -> dict:
     """players: {player_id: full_name} of the squad. Returns {meta, rows, errors, blank_rows}.
     rows: accepted rows {level, sheet, row, player_id, cleared, test_date, height_cm, weight_kg, version, surface, timing, notes,
     results: {test_key: {trials:[..3], final, setup}}}."""
@@ -163,7 +164,7 @@ def parse_workbook(data: bytes, players: dict[int, str]) -> dict:
                         trials.append(None)
                         continue
                     try:
-                        trials.append(parse_value(t, v))
+                        trials.append(parse_value(t, v, plausible(t.key, age_group)))
                     except ValueError as e:
                         err(name, n, h, str(e))
                         trials.append(None)

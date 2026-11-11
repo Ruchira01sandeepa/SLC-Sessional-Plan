@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..age_groups import PROFILES as AGE_PROFILES
+from ..age_norms import AGE_GROUPS as AGE_NORM_GROUPS, table as norms_table
 from ..db import get_db
 from ..deps import current_user
 from ..models import PdpRubricItem, PlayerRole, Scenario, SkillTemplate, TemplateKind
@@ -11,6 +12,14 @@ from ..role_kpis import kpis_for
 from ..schemas import RubricOut, ScenarioOut, SkillTemplateOut
 
 router = APIRouter(prefix="/meta", tags=["reference data"], dependencies=[Depends(current_user)])
+
+
+@router.get("/age-norms")
+def age_norms():
+    """Age-group reference values for the physical tests (developing / expected / strong, plus the typo-check ranges)."""
+    return {"groups": list(AGE_NORM_GROUPS), "tests": norms_table(),
+            "note": "Provisional references for boys, from published youth data where it exists and estimates where it does not. "
+                    "Replace with SLC's own percentiles as data builds up."}
 
 
 @router.get("/age-groups")

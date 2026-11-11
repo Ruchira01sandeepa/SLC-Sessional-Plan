@@ -29,7 +29,12 @@ from __future__ import annotations
 
 from datetime import date
 
+from .age_norms import age_band, reference
 from .test_battery import AREA_LABEL, BY_KEY, display
+
+
+def _age_label(score: float) -> str:
+    return "Below reference" if score < 25 else "Developing" if score < 50 else "On track" if score < 75 else "Strong for age"
 
 MIDDLE = 50.0
 STRENGTH_AT = 70.0
@@ -155,7 +160,10 @@ def build_profile(*, player: dict, cat: dict | None, prev_cat: dict | None = Non
     prev_areas = {a["area"]: a["percentile"] for a in (prev_cat or {}).get("areas", []) if a.get("percentile") is not None}
 
     areas = []
-    cat_areas = (cat or {}).get("areas", []) if cat and cat.get("overall") is not None else []
+    age_group, gender = player.get("age_group"), player.get("gender", "male")
+    has_results = any(t.get("value") is not None for a in (cat or {}).get("areas", []) for t in a.get("tests", []))
+    # squad-ranked areas, or (small group) areas with results that the age reference can place
+    cat_areas = (cat or {}).get("areas", []) if cat and (cat.get("overall") is not None or has_results) else []
     known = {a["area"] for a in cat_areas}
     pdp_area: dict[str, list[int]] = {}
     for (group, skill), r in pdp.items():
@@ -163,11 +171,23 @@ def build_profile(*, player: dict, cat: dict | None, prev_cat: dict | None = Non
             for a in PDP_AREA.get(skill, []):
                 pdp_area.setdefault(a, []).append(r)
     for a in cat_areas:
-        tests = [t for t in a.get("tests", []) if t.get("percentile") is not None]
-        weakest = min(tests, key=lambda t: t["percentile"]) if tests else None
-        areas.append({"area": a["area"], "label": a["label"], "percentile": a["percentile"], "source": "test",
-                      "tests": [{"key": t["key"], "label": t["label"], "percentile": t.get("percentile"), "value": t.get("value"), "display": t.get("display")} for t in a.get("tests", [])],
-                      "weakest_test": weakest["key"] if weakest else None})
+        tests = [{"key": t["key"], "label": t["label"], "percentile": t.get("percentile"), "value": t.get("value"), "display": t.get("display"),
+                  "age": age_band(t["key"], t.get("value"), age_group, gender)} for t in a.get("tests", [])]
+        ranked = [t for t in tests if t["percentile"] is not None]
+        aged = [t for t in tests if t["age"]]
+        if ranked:                                                   # squad rank (5+ players of the level): the main view
+            pct, source = a["percentile"], "test"
+            weakest = min(ranked, key=lambda t: t["percentile"])
+        elif aged:                                                   # small group: fall back to the age-group reference
+            pct, source = round(sum(t["age"]["score"] for t in aged) / len(aged), 1), "age reference"
+            weakest = min(aged, key=lambda t: t["age"]["score"])
+        else:
+            pct, source, weakest = a.get("percentile"), "test", None
+        age_scores = [t["age"]["score"] for t in aged]
+        areas.append({"area": a["area"], "label": a["label"], "percentile": pct, "source": source, "tests": tests,
+                      "weakest_test": weakest["key"] if weakest else None,
+                      "age_score": round(sum(age_scores) / len(age_scores), 1) if age_scores else None,
+                      "age_label": _age_label(sum(age_scores) / len(age_scores)) if age_scores else None})
     for area, ratings in pdp_area.items():                          # areas with no test result: use the coach's rating
         if area not in known:
             r = min(ratings)
@@ -232,9 +252,12 @@ def build_profile(*, player: dict, cat: dict | None, prev_cat: dict | None = Non
             "objective": (screening or {}).get("this_year_objective"), "inputs": inputs, "missing": missing}
 
 
-def physical_goal(area: dict, test_key: str, cohort_values: list[float] | None, next_window: str | None) -> dict | None:
-    """A measurable target for the weakest test of a priority area: the result that would place the player about 15 rank points
-    higher in today's group (at least the middle, at most rank 75), and never more than an 8% change in one window."""
+def physical_goal(area: dict, test_key: str, cohort_values: list[float] | None, next_window: str | None,
+                  age_group: str | None = None, gender: str | None = "male") -> dict | None:
+    """A measurable target for the weakest test of a priority area. First choice: the result that would place the player about
+    15 rank points higher in today's group (at least the middle, at most rank 75). When the group is too small to rank, or the
+    player is below the expected value for their age group, the age reference's expected value is the aim. Never more than an
+    8% change in one window, so the target stays reachable."""
     t = BY_KEY.get(test_key)
     cur = next((x for x in area["tests"] if x["key"] == test_key), None)
     if not t or not cur or cur.get("value") is None:
@@ -249,6 +272,16 @@ def physical_goal(area: dict, test_key: str, cohort_values: list[float] | None, 
         target = ranked[idx]
     step = 0.08 * value
     better = (lambda a, b: a > b) if t.higher_is_better else (lambda a, b: a < b)
+    ref = reference(test_key, age_group, gender)
+    age_note = ""
+    if ref is not None:
+        expected = ref[1]
+        if target is None and better(expected, value):
+            target = expected                                       # no group to rank against: aim for the age group's expected value
+        elif target is not None and better(expected, target) and better(expected, value):
+            target = expected                                       # the group is behind the age reference: aim higher
+        band = age_band(test_key, value, age_group, gender)
+        age_note = f" For {band['age_group']} it is {band['label'].lower()} (expected {band['expected']} {t.unit})."
     if target is None or not better(target, value):
         target = value * (1.03 if t.higher_is_better else 0.97)
     if abs(target - value) > step:
@@ -258,4 +291,5 @@ def physical_goal(area: dict, test_key: str, cohort_values: list[float] | None, 
     return {"kind": "test", "area": area["area"], "label": f"{t.label}: {display(t, value)} to {display(t, target)} {t.unit}",
             "test": t.key, "current": value, "target": round(target, 2), "unit": t.unit, "current_display": display(t, value),
             "target_display": display(t, target), "by": next_window,
-            "why": f"{area['label']} is a priority (rank {area['percentile']:g} of 100); {t.label.lower()} is its weakest test."}
+            "why": f"{area['label']} is a priority ({'rank' if area.get('source') == 'test' else 'age score'} {area['percentile']:g} of 100); "
+                   f"{t.label.lower()} is its weakest test." + age_note}

@@ -162,10 +162,19 @@ def test_every_area_stays_in_the_plan_for_a_weak_player():
     assert ph["areas"][0]["area"] == "core"                                                                       # weakest first
 
 
-def test_area_without_allowed_work_names_the_phase_that_has_it():
+def test_weak_speed_is_trained_in_every_phase_that_allows_it():
+    """Pre-season allows no sprinting or jumping, so a weak-speed player builds the base for speed there (single-leg strength,
+    hip drive, quick feet); sprints and jumps lead in pre-competition and continue in-season."""
     plan = build_individual_plan(player={"name": "P", "role": "fast_bowler"}, cat=cat_with("speed"), ready=READY, g=grid())
-    pre = next(a for a in next(p for p in plan["phases"] if p["phase"] == "pre_season")["areas"] if a["area"] == "speed")
-    assert pre["exercises"] == [] and "pre-competition" in pre["note"]
+    by = {p["phase"]: next(a for a in p["areas"] if a["area"] == "speed") for p in plan["phases"]}
+    pre = by["pre_season"]
+    assert pre["exercises"] and {e["kind"] for e in pre["exercises"]} <= {"leg_strength", "agility", "mobility_balance"}
+    assert "pre-competition" in pre["note"]
+    comp = [e["kind"] for e in by["pre_competition"]["exercises"]]
+    assert comp[0] == "speed" and comp.count("speed") + comp.count("plyometric_power") >= 4
+    assert any(e["kind"] == "speed" for e in by["in_season"]["exercises"])
+    names = [e["name"] for a in next(p for p in plan["phases"] if p["phase"] == "pre_season")["areas"] for e in a["exercises"]]
+    assert len(names) == len(set(names))                                       # no exercise used for two areas in one phase
 
 
 CAUTION = {"status": "caution", "label": "Caution", "reason": "x"}

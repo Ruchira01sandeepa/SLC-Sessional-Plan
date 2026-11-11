@@ -49,10 +49,11 @@ const Charts = (() => {
   window.addEventListener("scroll", hide, { passive: true });
 
   /** Clean axis ticks: 0 … ≥max in 1/2/2.5/5 × 10^n steps. */
-  function ticks(max, target = 4) {
+  function ticks(max, target = 4, integer = false) {
     if (!(max > 0)) return [0, 1];
     const raw = max / target, p = 10 ** Math.floor(Math.log10(raw));
-    const step = [1, 2, 2.5, 5, 10].map((m) => m * p).find((s) => s >= raw);
+    let step = [1, 2, 2.5, 5, 10].map((m) => m * p).find((s) => s >= raw);
+    if (integer) step = Math.max(1, Math.ceil(step));          // counts (sessions, players) never get 0.25 ticks
     const out = [];
     for (let v = 0; v < max + step * 0.999; v += step) out.push(+v.toFixed(10));
     return out;
@@ -61,13 +62,39 @@ const Charts = (() => {
 
   // ───────── stat tile ─────────
   /** {label, value, sub?, tone?: "good"|"warning"|"critical", icon?} */
+  const reduceMotion = () => !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+
+  /** Count a plain number ("2,368", "67%", "1.31") up from zero; anything else (dates, "–") is shown as is. */
+  function countUp(node, text) {
+    const m = /^([\d,]+(?:\.\d+)?)(%?)$/.exec(String(text));
+    if (!m || reduceMotion()) return;
+    const target = parseFloat(m[1].replace(/,/g, ""));
+    if (!(target > 0)) return;
+    const dec = (m[1].split(".")[1] || "").length, grouped = m[1].includes(",");
+    const show = (v) => (grouped ? v.toLocaleString(undefined, { minimumFractionDigits: dec, maximumFractionDigits: dec }) : v.toFixed(dec)) + m[2];
+    const t0 = performance.now(), dur = 750;
+    node.textContent = show(0);
+    const step = (t) => {
+      const k = Math.min(1, (t - t0) / dur);
+      node.textContent = k < 1 ? show(target * (1 - Math.pow(1 - k, 3))) : String(text);
+      if (k < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
   function stat({ label, value, sub, tone }) {
-    return el("div", "stat" + (tone ? " tone-" + tone : ""), el("div", "stat-label", label), el("div", "stat-value", value), sub ? el("div", "stat-sub", sub) : null);
+    const v = el("div", "stat-value", value);
+    countUp(v, value);
+    return el("div", "stat" + (tone ? " tone-" + tone : ""), el("div", "stat-label", label), v, sub ? el("div", "stat-sub", sub) : null);
   }
 
   // ───────── legend ─────────
   function legend(items) {
-    return el("ul", "viz-legend", items.map((i) => el("li", null, el("span", "swatch " + i.cls), el("span", "lg-label", i.label), i.value != null ? el("span", "lg-value", i.value) : null)));
+    return el("ul", "viz-legend", items.map((i, k) => {
+      const li = el("li", null, el("span", "swatch " + i.cls), el("span", "lg-label", i.label), i.value != null ? el("span", "lg-value", i.value) : null);
+      li.style.setProperty("--i", k);                                    // stagger index for motion.css
+      return li;
+    }));
   }
 
   // ───────── donut ─────────
@@ -81,7 +108,7 @@ const Charts = (() => {
     if (total > 0) {
       let a0 = -Math.PI / 2;
       const live = parts.filter((p) => p.value > 0);
-      for (const p of live) {
+      for (const [k, p] of live.entries()) {
         const a1 = a0 + (p.value / total) * Math.PI * 2;
         const share = Math.round((p.value / total) * 100);
         let path;
@@ -93,6 +120,7 @@ const Charts = (() => {
           path = svg("path", { d: `M${P(R, a0)}A${R} ${R} 0 ${large} 1 ${P(R, a1)}L${P(r, a1)}A${r} ${r} 0 ${large} 0 ${P(r, a0)}Z`, class: "donut-seg " + p.cls });
         }
         hover(path, [p.label, `${num(p.value)}${unit} · ${share}%`]);
+        path.style.setProperty("--i", k);
         g.append(path);
         a0 = a1;
       }
@@ -114,12 +142,13 @@ const Charts = (() => {
       for (const r of refs) { const m = el("span", "hb-ref-label", r.label); m.style.left = (r.value / top) * 100 + "%"; head.children[1].append(m); }
       wrap.append(head);
     }
-    for (const d of data) {
+    for (const [idx, d] of data.entries()) {
       const track = el("span", "hb-track");
       for (const r of refs) { const line = el("span", "hb-ref"); line.style.left = (r.value / top) * 100 + "%"; track.append(line); }
       if (d.value != null && d.value > 0) {
         const bar = el("span", "hb-bar " + (d.cls || "c-s1"));
         bar.style.width = Math.max(0.6, (d.value / top) * 100) + "%";
+        bar.style.setProperty("--i", Math.min(idx, 15));
         track.append(bar);
       }
       const row = el(d.onClick ? "button" : "div", "hb-row" + (d.onClick ? " clickable" : ""),
@@ -136,7 +165,7 @@ const Charts = (() => {
   /** data: [{label, value, cls?, tip?: string[]}]; highlight: index to label on its cap (default: the last). */
   function columns({ data, height = 180, format = (v) => num(v), highlight = data.length - 1, ariaLabel, refs = [], capAll = false, capFormat = (v) => num(v) }) {
     const max = Math.max(...data.map((d) => d.value || 0), ...refs.map((r) => r.value), 0);
-    const tk = ticks(max), top = tk[tk.length - 1] || 1;
+    const tk = ticks(max, 4, data.every((d) => Number.isInteger(d.value ?? 0))), top = tk[tk.length - 1] || 1;
     const plot = el("div", "cols-plot");
     plot.style.height = height + "px";
     for (const t of tk) {
@@ -154,6 +183,7 @@ const Charts = (() => {
       const col = el("div", "cols-col");
       const bar = el("div", "cols-bar " + (d.cls || (i === highlight ? "c-s1" : "c-muted")));
       bar.style.height = d.value > 0 ? Math.max(1, (d.value / top) * 100) + "%" : "0";
+      bar.style.setProperty("--i", Math.min(i, 20));                     // long series: cap the stagger so it stays quick
       if ((capAll || i === highlight) && d.value != null) bar.append(el("span", "cols-cap", capFormat(d.value)));
       col.append(bar);
       hover(col, d.tip || [d.label, format(d.value)]);

@@ -105,7 +105,7 @@ with sync_playwright() as p:
 
     # --- sign out / physio sees medical; coach never does ---
     page.click("#logout")
-    page.wait_for_selector("text=Welcome back")
+    page.wait_for_selector("h1:has-text('Sign in')")
     login(page, "physio@demo.slc.lk")
     page.click(".item:has-text('Kavindu')")
     page.wait_for_selector("text=Medical & availability")

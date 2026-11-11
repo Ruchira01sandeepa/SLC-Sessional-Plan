@@ -238,3 +238,26 @@ def test_api_plan_uses_growth_screening_and_ratings(client, world, db, seeded):
     other = client.get(f"/players/{ids[3]}/individual-plan?season_id={sid}&window=mid_season", headers=w["h"]["coach_a"]).json()
     assert not other["profile"]["growth"]["in_spurt"]
     assert j["goals"] != other["goals"] or j["phases"] != other["phases"]                                           # not the same plan
+
+
+# ───────────── every weak area is worked in every phase ─────────────
+WEAKEST_TEST = {"endurance": "run_2km", "power": "broad_jump", "upper_strength": "pushups", "speed": "sprint_20m",
+                "agility": "shuttle_5_10_5", "core": "plank"}
+
+
+@pytest.mark.parametrize("area", list(WEAKEST_TEST))
+def test_every_weak_area_gets_work_in_every_phase(area):
+    from app.individual_plan import AREA_KINDS, MAIN_KINDS
+    p = plan(pcts={WEAKEST_TEST[area]: 8.0})
+    for ph in p["phases"]:
+        a = next(x for x in ph["areas"] if x["area"] == area)
+        assert a["priority"] and a["exercises"], (area, ph["phase"])                         # never left without work
+        assert all(e["kind"] in AREA_KINDS[area] for e in a["exercises"])
+        if ph["phase"] != "transition":
+            assert len(a["exercises"]) >= 4, (area, ph["phase"])                            # a real share of the programme
+        if not any(e["kind"] in MAIN_KINDS[area] for e in a["exercises"]):
+            assert a["note"] and ("foundation" in a["note"] or "base" in a["note"]), (area, ph["phase"])   # and it says why
+        names = [e["name"] for x in ph["areas"] for e in x["exercises"]]
+        assert len(names) == len(set(names)), ph["phase"]                                    # no exercise counted twice
+    comp = next(x for x in p["phases"] if x["phase"] == "pre_competition")
+    assert any(e["kind"] in MAIN_KINDS[area] for e in next(x for x in comp["areas"] if x["area"] == area)["exercises"])

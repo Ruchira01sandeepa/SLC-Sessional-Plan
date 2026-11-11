@@ -23,6 +23,16 @@ app.include_router(development.router)
 app.include_router(plan_versions.router)
 
 
+BRAND_DIR = Path(__file__).parent / "static" / "brand"
+
+
+@app.get("/branding", tags=["ops"])
+def branding():
+    """Public: the organisation's logo for the sign-in page, if one has been placed in app/static/brand/ (logo.svg, logo.png or logo.webp)."""
+    logo = next((f"brand/{n}" for n in ("logo.svg", "logo.png", "logo.webp") if (BRAND_DIR / n).is_file()), None)
+    return {"name": "Sri Lanka Cricket", "logo": logo}
+
+
 @app.get("/health", tags=["ops"])
 def health():
     return {"status": "ok"}

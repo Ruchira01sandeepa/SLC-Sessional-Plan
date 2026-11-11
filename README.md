@@ -125,3 +125,11 @@ Evidence used: NSCA long-term athletic development position statement (Lloyd et 
 - **Role skills** card (player page): the Development / Adaptability / Progress grids from the workbooks. *Have to improve* becomes goals and matched drills in the plan; *Good*, *Naturally good*, *Complete* are listed as strengths.
 - **Batting and keeping drills** were added (`app/data/extra_drills.json`, marked "added"): the supplied list has none. Edit that file to change them.
 - Existing database: run `alembic upgrade head` (two new tables: plan versions and exercise logs).
+
+## Age references for the tests (U15 / U17 / U19)
+Each test result is also labelled against the player's age group: *Below reference*, *Developing*, *On track* or *Strong for age*
+(player page, "For age" column; full table on the Tests tab and in `docs/AGE_REFERENCES.md`). Each age group has its own typo-check range
+for imports. When fewer than 5 players of a level are tested, the individual plan places areas against these references instead of
+leaving the player without a plan, and test goals aim at the age group's expected value (never more than 8% in one window).
+Values are provisional (boys only; published youth data where it exists, estimates where it does not) and live in `app/age_norms.py`.
+Squads can now be U15, U17 or U19 (U19 bowling limits are placeholders like U17).

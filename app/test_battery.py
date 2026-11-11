@@ -100,8 +100,9 @@ def format_mmss(seconds: float | None) -> str | None:
     return f"{s // 60}.{s % 60:02d}"
 
 
-def parse_value(test: Test, value) -> float:
-    """One trial as typed by the admin -> stored number. Blank values are handled by the caller, never estimated."""
+def parse_value(test: Test, value, rng: tuple[float, float] | None = None) -> float:
+    """One trial as typed by the admin -> stored number. Blank values are handled by the caller, never estimated.
+    rng: the plausible range to check against (the squad's age group, see age_norms.plausible); the test's own range otherwise."""
     if test.kind == "mmss":
         v = parse_mmss(value)
     else:
@@ -119,8 +120,9 @@ def parse_value(test: Test, value) -> float:
             v = int(v)
         else:
             v = round(v, 2)
-    if not test.lo <= v <= test.hi:
-        lo, hi = (format_mmss(test.lo), format_mmss(test.hi)) if test.kind == "mmss" else (test.lo, test.hi)
+    lo_v, hi_v = rng or (test.lo, test.hi)
+    if not lo_v <= v <= hi_v:
+        lo, hi = (format_mmss(lo_v), format_mmss(hi_v)) if test.kind == "mmss" else (lo_v, hi_v)
         shown = format_mmss(v) if test.kind == "mmss" else v
         raise ValueError(f"{test.label} {shown} {test.unit} is outside the plausible range {lo} to {hi} {test.unit} - check the entry")
     return float(v)

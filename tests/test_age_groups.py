@@ -18,7 +18,7 @@ TODAY = date.today()
 
 # ───────────── profiles (pure) ─────────────
 def test_profiles_and_fallback():
-    assert set(PROFILES) == {"U15", "U17"}
+    assert set(PROFILES) == {"U15", "U17", "U19"}
     assert profile(None).code == profile("nonsense").code == "U15"           # unknown falls back to the strictest rules
     assert profile("u17").code == "U17"
     u15, u17 = PROFILES["U15"].fast_limits, PROFILES["U17"].fast_limits
@@ -114,4 +114,4 @@ def test_effective_limits_endpoint_and_rules_use_the_squad_age_group(client, db)
     assert rules["age_group"] == "U17" and rules["fast_bowler_defaults"]["max_match_day_overs"] == 18
     assert any("PLACEHOLDER" in n for n in rules["notes"])
     ages = client.get("/meta/age-groups", headers=h).json()
-    assert [a["code"] for a in ages] == ["U15", "U17"]
+    assert [a["code"] for a in ages] == ["U15", "U17", "U19"]

@@ -39,9 +39,18 @@ function toast(msg) {
 
 // ───────────── state & api ─────────────
 const S = { token: null, user: null, squads: [], squad: null, seasons: [], season: null, tab: "players", pid: null };
+const TOKEN_KEY = "slc_token", EMAIL_KEY = "slc_email";
 const store = {
-  get() { try { return sessionStorage.getItem("slc_token"); } catch { return null; } },
-  set(v) { try { v ? sessionStorage.setItem("slc_token", v) : sessionStorage.removeItem("slc_token"); } catch { /* private mode: stay in memory */ } },
+  get() { try { return sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem(TOKEN_KEY); } catch { return null; } },
+  /** remember=true keeps the sign-in across browser restarts (until the token expires); otherwise it ends with the tab. */
+  set(v, remember = false) {
+    try {
+      sessionStorage.removeItem(TOKEN_KEY); localStorage.removeItem(TOKEN_KEY);
+      if (v) (remember ? localStorage : sessionStorage).setItem(TOKEN_KEY, v);
+    } catch { /* private mode: stay in memory */ }
+  },
+  email() { try { return localStorage.getItem(EMAIL_KEY) || ""; } catch { return ""; } },
+  rememberEmail(v) { try { v ? localStorage.setItem(EMAIL_KEY, v) : localStorage.removeItem(EMAIL_KEY); } catch { /* ignore */ } },
 };
 
 async function api(path, opts = {}) {
@@ -128,54 +137,129 @@ function submitButton(label, busyLabel) {
   return { el: b, busy(on) { b.disabled = on; b.classList.toggle("busy", on); b.textContent = on ? busyLabel : label; } };
 }
 
-function authShell(...content) {
+let BRANDING = null;
+async function branding() {
+  if (!BRANDING) { try { BRANDING = await api("/branding"); } catch { BRANDING = { logo: null, name: "Sri Lanka Cricket" }; } }
+  return BRANDING;
+}
+
+/** The organisation's logo (app/static/brand/logo.svg|png, when present) above a clean wordmark. */
+function brandMark(b) {
+  return h("div", { class: "brand-mark" + (b.logo ? " has-logo" : "") },
+    b.logo ? h("img", { class: "brand-logo", src: b.logo, alt: b.name, decoding: "async" })
+      : h("div", { class: "brand-word" }, h("span", { class: "bw-1" }, "Sri Lanka"), h("span", { class: "bw-2" }, "Cricket")));
+}
+
+/** An original, abstract cricket ground drawn in lines: boundary, inner circle, pitch and creases. Draws itself in. */
+function fieldArt() {
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", "0 0 600 600"); svg.setAttribute("class", "field-art"); svg.setAttribute("aria-hidden", "true");
+  const add = (tag, attrs) => { const e = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); svg.append(e); return e; };
+  add("ellipse", { cx: 300, cy: 300, rx: 280, ry: 260, class: "fa-line fa-1", pathLength: 1 });
+  add("ellipse", { cx: 300, cy: 300, rx: 150, ry: 140, class: "fa-line fa-2", pathLength: 1 });
+  add("rect", { x: 284, y: 236, width: 32, height: 128, rx: 2, class: "fa-line fa-3", pathLength: 1 });
+  add("line", { x1: 272, y1: 252, x2: 328, y2: 252, class: "fa-line fa-4", pathLength: 1 });
+  add("line", { x1: 272, y1: 348, x2: 328, y2: 348, class: "fa-line fa-4", pathLength: 1 });
+  return svg;
+}
+
+async function authShell(...content) {
   document.body.classList.add("auth-mode");
   ["#top", "#tabs"].forEach((s) => ($(s).hidden = true));
-  const brand = h("aside", { class: "auth-brand" },
-    h("div", { class: "auth-logo" }, h("span", { class: "mark" }, "SLC"), h("span", {}, "Sri Lanka Cricket · U15 & U17")),
-    h("div", { class: "auth-pitch" },
-      h("h2", {}, "Player Workload, Development & Seasonal Planning"),
-      h("ul", { class: "auth-points" },
-        h("li", {}, "Workload and bowling limits tracked for every player"),
-        h("li", {}, "Fitness testing, progress reports and individual plans"),
-        h("li", {}, "Medical records encrypted and visible to physiotherapists only"))),
-    h("p", { class: "auth-foot" }, "Authorised staff and players only. Activity is logged."));
-  $("#main").replaceChildren(h("div", { class: "auth" }, brand, h("section", { class: "auth-panel" }, h("div", { class: "auth-box" }, content))));
+  const box = $("#main .auth .auth-box");
+  if (box) return box.replaceChildren(...content);            // switching tabs: keep the brand panel (and its animation) as it is
+  const b = await branding();
+  $("#main").replaceChildren(h("div", { class: "auth centred" },
+    h("div", { class: "aurora", "aria-hidden": "true" }, h("span"), h("span"), h("span")), fieldArt(),
+    h("div", { class: "auth-column" },
+      h("div", { class: "auth-head" }, brandMark(b), h("div", { class: "brand-tag" }, "Player Development")),
+      h("section", { class: "auth-card" }, h("div", { class: "auth-box" }, content)),
+      h("div", { class: "auth-copy" }, `© ${new Date().getFullYear()} ${b.name}`))));
+}
+
+/** Opening splash: the crest, the product name and a short progress line. Once per browser session; any click or key skips it;
+ *  never shown to people who prefer reduced motion. Resolves when the page behind it may appear. */
+async function splash() {
+  let seen = false;
+  try { seen = sessionStorage.getItem("slc_splash") === "1"; sessionStorage.setItem("slc_splash", "1"); } catch { /* private mode: show it */ }
+  if (seen || (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches)) return;
+  const b = await branding();
+  const el = h("div", { class: "splash", "aria-hidden": "true" },
+    h("div", { class: "aurora" }, h("span"), h("span"), h("span")),
+    h("div", { class: "splash-core" },
+      h("div", { class: "splash-ring" }), h("div", { class: "splash-ring r2" }),
+      h("div", { class: "splash-logo" }, b.logo ? h("img", { src: b.logo, alt: "" }) : h("div", { class: "brand-word" }, h("span", { class: "bw-1" }, "Sri Lanka"), h("span", { class: "bw-2" }, "Cricket"))),
+      h("div", { class: "splash-title" }, "Player Development"),
+      h("div", { class: "splash-bar" }, h("span"))));
+  document.body.append(el);
+  await new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      el.classList.add("out");
+      setTimeout(() => el.remove(), 700);
+      resolve();
+    };
+    setTimeout(finish, 2200);
+    el.addEventListener("click", finish);
+    window.addEventListener("keydown", finish, { once: true });
+  });
 }
 
 // --- screens ---
+const AUTH_HASH = { signin: "#/signin", signup: "#/signup" };
 async function showLogin(mode = "signin", notice = null) {
   const cfg = await authConfig();
   if (mode === "signup" && !cfg.signup_enabled) mode = "signin";
-  const tabs = cfg.signup_enabled ? h("div", { class: "seg", role: "tablist", "aria-label": "Account" },
-    [["signin", "Sign in"], ["signup", "Request access"]].map(([k, t]) => h("button", { type: "button", role: "tab", "aria-selected": String(mode === k), onclick: () => mode !== k && showLogin(k) }, t))) : null;
-  authShell(tabs, mode === "signin" ? signInForm(cfg, notice) : signUpForm(cfg));
-  const first = $(".auth-box input"); if (first) first.focus();
+  S.authMode = mode;
+  if (location.hash !== AUTH_HASH[mode]) location.hash = AUTH_HASH[mode];       // its own address: Back and bookmarks work
+  document.title = (mode === "signup" ? "Sign up" : "Sign in") + " · SLC Player Development";
+  await authShell(mode === "signin" ? signInForm(cfg, notice) : signUpForm(cfg));
+  const fields = [...document.querySelectorAll(".auth-box input:not([type=checkbox])")];
+  const first = fields.find((i) => !i.value) || fields[0];                    // remembered email: start in the password box
+  if (first) first.focus();
 }
+window.addEventListener("hashchange", () => {
+  if (S.token) return;
+  const mode = location.hash === AUTH_HASH.signup ? "signup" : location.hash === AUTH_HASH.signin ? "signin" : null;
+  if (mode && mode !== S.authMode) showLogin(mode);
+});
+const switchLink = (text, label, mode) => h("p", { class: "auth-switch" }, text + " ", h("a", { href: AUTH_HASH[mode], class: "link-strong" }, label));
 
 function signInForm(cfg, notice) {
   const err = h("div", { class: "err", role: "alert" });
-  const email = h("input", { type: "email", autocomplete: "username", required: true, maxLength: 255, spellcheck: false });
+  const saved = store.email();
+  const email = h("input", { type: "email", autocomplete: "username", required: true, maxLength: 255, spellcheck: false, value: saved });
   const pw = pwField("Password", "current-password");
+  const remember = h("input", { type: "checkbox", checked: !!saved });
   const btn = submitButton("Sign in", "Signing in…");
-  const help = h("p", { class: "hint", hidden: true }, "Ask your administrator to reset your password. For your security, passwords are never sent by email.");
-  return h("form", { class: "auth-form", oninput: () => (err.textContent = ""), onsubmit: async (e) => {
+  const help = h("p", { class: "hint", hidden: true }, "Ask your administrator to reset it.");
+  const form = h("form", { class: "auth-form", oninput: () => (err.textContent = ""), onsubmit: async (e) => {
     e.preventDefault(); err.textContent = ""; btn.busy(true);
     try {
       const r = await api("/auth/login", { method: "POST", body: { email: email.value.trim(), password: pw.input.value } });
-      S.token = r.access_token; store.set(S.token);
+      S.token = r.access_token; store.set(S.token, remember.checked);
+      store.rememberEmail(remember.checked ? email.value.trim() : "");
+      history.replaceState(null, "", location.pathname);
+      document.title = "SLC Player Development";
       r.must_change_password ? showChangePassword() : start();
     } catch (x) {
-      err.textContent = x.message === "account_pending" ? "Your access request is still waiting for an administrator to approve it." : x.message;
+      err.textContent = x.message === "account_pending" ? "Your request is waiting for approval." : x.message;
       btn.busy(false); pw.input.select();
+      form.classList.remove("shake"); void form.offsetWidth; form.classList.add("shake");
     }
   } },
-    h("h1", {}, "Welcome back"), h("p", { class: "sub" }, "Sign in to continue to your squad."),
+    h("h1", {}, "Sign in"),
     notice ? h("div", { class: "notice ok", role: "status" }, notice) : null,
-    h("label", {}, "Email address", email), pw.el,
-    h("div", { class: "auth-row" }, h("button", { type: "button", class: "link", onclick: () => (help.hidden = !help.hidden) }, "Forgot password?")),
+    h("label", {}, "Email", email), pw.el,
+    h("div", { class: "auth-options" },
+      h("label", { class: "check" }, remember, h("span", {}, "Remember me")),
+      h("button", { type: "button", class: "link", onclick: () => (help.hidden = !help.hidden) }, "Forgot password?")),
     help, err, btn.el,
-    cfg.signup_enabled ? h("p", { class: "auth-alt" }, "New to the programme? ", h("button", { type: "button", class: "link", onclick: () => showLogin("signup") }, "Request access")) : null);
+    cfg.signup_enabled ? switchLink("Don't have an account?", "Sign up", "signup") : null);
+  return form;
 }
 
 function signUpForm(cfg) {
@@ -188,13 +272,13 @@ function signUpForm(cfg) {
   role.addEventListener("change", () => {
     const off = role.value && !cfg.enabled_roles.includes(role.value);
     roleHint.hidden = !off;
-    roleHint.textContent = off ? `${SIGNUP_ROLE_LABEL[role.value]} accounts cannot sign in yet in this system, even after approval. You can still send the request.` : "";
+    roleHint.textContent = off ? `${SIGNUP_ROLE_LABEL[role.value]} sign-in is not open yet.` : "";
   });
   const note = h("textarea", { maxLength: 300, rows: 2, placeholder: "e.g. Head coach, Western Province U17" });
   const pw = pwField("Password", "new-password");
   const strength = pwStrength(pw.input);
   const confirm = pwField("Confirm password", "new-password");
-  const btn = submitButton("Request access", "Sending request…");
+  const btn = submitButton("Sign up", "Creating account…");
   return h("form", { class: "auth-form", oninput: () => (err.textContent = ""), onsubmit: async (e) => {
     e.preventDefault(); err.textContent = "";
     if (!strength.valid()) { err.textContent = "Choose a password that meets all three rules."; return pw.input.focus(); }
@@ -203,33 +287,34 @@ function signUpForm(cfg) {
     try {
       const r = await api("/auth/signup", { method: "POST", body: { full_name: name.value.trim(), email: email.value.trim(), role: role.value,
         note: note.value.trim() || null, password: pw.input.value } });
-      authShell(h("div", { class: "auth-done" }, h("div", { class: "done-mark", "aria-hidden": "true" }, "✓"), h("h1", {}, "Request sent"),
-        h("p", { class: "sub" }, r.detail), h("button", { type: "button", class: "block", onclick: () => showLogin("signin") }, "Back to sign in")));
+      await authShell(h("div", { class: "auth-done" }, h("div", { class: "done-mark", "aria-hidden": "true" }, "✓"), h("h1", {}, "Account created"),
+        h("p", { class: "sub" }, "An administrator will activate it. You can sign in once it is approved."),
+        h("button", { type: "button", class: "block", onclick: () => showLogin("signin") }, "Go to sign in")));
     } catch (x) { err.textContent = x.message; btn.busy(false); }
   } },
-    h("h1", {}, "Request access"), h("p", { class: "sub" }, "An administrator reviews every request before the account can be used."),
-    h("label", {}, "Full name", name), h("label", {}, "Email address", email),
-    h("label", {}, "Your role", role), roleHint,
+    h("h1", {}, "Create an account"), h("p", { class: "auth-lead" }, "New accounts are activated by an administrator."),
+    h("label", {}, "Full name", name), h("label", {}, "Email", email),
+    h("label", {}, "Role", role), roleHint,
     h("label", {}, "About you ", h("span", { class: "opt" }, "(optional)"), note),
     pw.el, strength.el, confirm.el, err, btn.el,
-    h("p", { class: "auth-alt" }, "Already have an account? ", h("button", { type: "button", class: "link", onclick: () => showLogin("signin") }, "Sign in")));
+    switchLink("Already have an account?", "Sign in", "signin"));
 }
 
-function showChangePassword() {
+async function showChangePassword() {
   const err = h("div", { class: "err", role: "alert" });
   const cur = pwField("Current (temporary) password", "current-password");
   const nw = pwField("New password", "new-password");
   const strength = pwStrength(nw.input);
   const confirm = pwField("Confirm new password", "new-password");
   const btn = submitButton("Save password", "Saving…");
-  authShell(h("form", { class: "auth-form", oninput: () => (err.textContent = ""), onsubmit: async (e) => {
+  await authShell(h("form", { class: "auth-form", oninput: () => (err.textContent = ""), onsubmit: async (e) => {
     e.preventDefault(); err.textContent = "";
     if (!strength.valid()) { err.textContent = "Choose a password that meets all three rules."; return nw.input.focus(); }
     if (nw.input.value !== confirm.input.value) { err.textContent = "The two passwords do not match."; return confirm.input.focus(); }
     btn.busy(true);
     try { await api("/auth/change-password", { method: "POST", body: { current_password: cur.input.value, new_password: nw.input.value } }); toast("Password changed"); start(); }
     catch (x) { err.textContent = x.message; btn.busy(false); }
-  } }, h("h1", {}, "Set a new password"), h("p", { class: "sub" }, "Your account was created with a temporary password. Choose your own to continue."),
+  } }, h("h1", {}, "Set a new password"),
     cur.el, nw.el, strength.el, confirm.el, err, btn.el,
     h("p", { class: "auth-alt" }, h("button", { type: "button", class: "link", onclick: signOut }, "Sign out"))));
   cur.input.focus();
@@ -242,9 +327,11 @@ async function start() {
     S.squads = await api("/squads");
   } catch (x) { return showLogin(); }
   document.body.classList.remove("auth-mode");
+  if (location.hash.startsWith("#/sign")) history.replaceState(null, "", location.pathname);
   $("#who").textContent = S.user.full_name;
   $("#who-role").textContent = SIGNUP_ROLE_LABEL[S.user.role] || S.user.role;
   $("#avatar").textContent = S.user.full_name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("");
+  branding().then((b) => { if (b.logo && !$("#top .top-logo")) $("#top .brand").prepend(h("img", { class: "top-logo", src: b.logo, alt: b.name })); });
   S.tab = can("player") ? "players" : "overview"; S.pid = null;
   $("#top").hidden = false;
   const sel = $("#squad");
@@ -303,7 +390,7 @@ const card = (title, sub, ...body) => h("section", { class: "card viz-card" }, h
 
 async function overviewTab() {
   const main = $("#main");
-  main.replaceChildren(h("div", { class: "empty" }, "Loading overview…"));
+  main.replaceChildren(h("div", { class: "empty loading" }, "Loading overview…"));
   const now = new Date();
   if (!S.ages) S.ages = await api("/meta/age-groups").catch(() => []);
   const ageProf = S.ages.find((a) => a.code === S.squad.age_group) || null;
@@ -373,17 +460,17 @@ async function overviewTab() {
     "These are placeholders until SLC confirms them. Tests use the " + ageProf.test_battery + ".") : null;
   main.replaceChildren(head, ageNotice, kpis,
     h("div", { class: "dash-grid two" },
-      card("Availability", "Set by the physiotherapist. Coaches see only this status.", availability),
+      card("Availability", "Set by the physiotherapist.", availability),
       card("Squad by role", null, roles)),
     h("div", { class: "dash-grid wide-left" },
-      card("Training load, last 7 days", "Session RPE × minutes per player. The line marks the squad average. Select a player to open their profile.",
+      card("Training load, last 7 days", "RPE × minutes. Line = squad average.",
         presentRoles.length > 1 ? Charts.legend(presentRoles.map((r) => ({ cls: ROLE_CLS[r], label: ROLE[r] }))) : null, loadChart),
       card("Open alerts", alerts.length ? `${alerts.length} open` : null, alertList(alerts.slice(0, 5)),
         alerts.length > 5 ? h("button", { class: "small ghost", onclick: () => go("workload") }, `See all ${alerts.length} alerts`) : null)),
     h("div", { class: "dash-grid wide-left" },
-      card("Load ratio", "Last 7 days ÷ the 4-week weekly average. Above 1.3 is raised, above 1.5 is high." + (waiting ? ` ${waiting} player(s) need 3 weeks of logs first.` : ""), ratioChart),
+      card("Load ratio", "7-day ÷ 4-week average. Raised above 1.3, high above 1.5." + (waiting ? ` ${waiting} need 3 weeks of logs.` : ""), ratioChart),
       card("Coming up", "Next 14 days", upcoming)),
-    bowlers.length ? card("Bowling, last 7 days", "Overs per bowler." + (lim ? ` ${S.squad.age_group} fast-bowler limits: ${lim.max_spell_overs} a spell, ${lim.max_match_day_overs} a match day, ${lim.max_bowling_days_week} bowling days in 7; checked automatically in the Workload tab.` : ""), oversChart) : null);
+    bowlers.length ? card("Bowling, last 7 days", lim ? `${S.squad.age_group} fast-bowler limits: ${lim.max_spell_overs} a spell · ${lim.max_match_day_overs} a day · ${lim.max_bowling_days_week} days in 7` : null, oversChart) : null);
 }
 const fixTz = (s) => (s.endsWith("Z") || /[+-]\d\d:\d\d$/.test(s) ? s : s + "Z");
 
@@ -507,7 +594,7 @@ async function medicalPanel(p) {
       await api(`/players/${p.id}/medical`, { method: "PUT", body: { current_health: health.value || null, injury_history: { ...inj, notes: notes.value || null } } });
       toast("Saved"); go("players");
     } catch (x) { err.textContent = x.message; }
-  } }, h("h2", {}, "Medical & availability"), h("p", { class: "sub" }, "Visible to physiotherapists only. Every view and change is logged. Coaches and the player see only availability and the note."),
+  } }, h("h2", {}, "Medical & availability"), h("p", { class: "sub" }, "Physiotherapists only. Every access is logged; others see availability only."),
     h("div", { class: "grid" }, field("Availability", av), field("Note shown to coaches", note)),
     field("Current health", health), field("Injury history notes", notes), err, h("button", { type: "submit" }, "Save")));
 }
@@ -571,7 +658,7 @@ async function fitnessTab() {
     h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, cols.map(([, l]) => h("th", {}, l)))),
       h("tbody", {}, rows.map((r) => h("tr", { class: "click", tabindex: 0, onclick: () => fitnessForm({ id: r.player_id, full_name: r.name, role: r.role }, phase),
         onkeydown: (e) => e.key === "Enter" && fitnessForm({ id: r.player_id, full_name: r.name, role: r.role }, phase) }, cols.map(([k]) => h("td", {}, fmt(r[k])))))))),
-    h("p", { class: "sub" }, "Tap a row to enter or edit that player's results. Empty cells mean not tested yet."),
+    h("p", { class: "sub" }, "Select a row to enter results. Empty = not tested."),
     can("coach", "sc_coach", "admin") ? benchmarkCard() : null);
 }
 
@@ -582,7 +669,7 @@ function benchmarkCard() {
   return h("form", { class: "card", onsubmit: async (e) => {
     e.preventDefault(); err.textContent = "";
     try { await api(`/squads/${S.squad.id}/fitness-benchmarks`, { method: "PUT", body: { field_name: fld.value, target_value: +val.value } }); toast("Benchmark saved"); val.value = ""; } catch (x) { err.textContent = x.message; }
-  } }, h("h3", {}, "Coach benchmark for this squad"), h("p", { class: "sub" }, "Provisional targets you choose. Players are compared with these, not with adult standards."),
+  } }, h("h3", {}, "Coach benchmark for this squad"), h("p", { class: "sub" }, "Your own provisional targets. No adult standards."),
     h("div", { class: "grid" }, field("Test", fld), field("Target value", val)), err, h("button", { class: "small", type: "submit" }, "Save benchmark"));
 }
 
@@ -647,7 +734,7 @@ async function drawProgress(p, host) {
   if (!rows.length && !roleRows.length) host.append(h("div", { class: "sub" }, "No results entered for this season."));
   if (rows.length) host.append(metricTable(rows));
   if (roleRows.length) host.append(h("h3", {}, "Role-specific measures (" + roleLabel(rep.role) + ")"), metricTable(roleRows));
-  host.append(h("p", { class: "sub" }, "Compared with the player's own baseline, personal targets and squad peers. No adult standards are applied. Squad % appears once five or more players are tested (role measures: five or more of the same role)."));
+  host.append(h("p", { class: "sub" }, "Against the player's own baseline and targets. Squad % needs 5+ players tested."));
   if (can("coach", "sc_coach", "admin")) host.append(h("button", { class: "small", onclick: () => fitnessForm(p, "baseline") }, "Enter / edit results"));
 }
 
@@ -690,7 +777,7 @@ function seasonForm(back = "calendar") {
       toast("Season added"); S.tab = back; await selectSquad(S.squad.id);
     } catch (x) { err.textContent = x.message; }
   } }, h("h1", {}, "New season"), h("div", { class: "grid" }, field("Name", f.name), field("Starts", f.s), field("Ends", f.e)),
-    h("h2", {}, "Phases"), h("p", { class: "sub" }, "Optional. If you leave this empty, the seasonal plan uses a suggested split that you can change later."), ed.el,
+    h("h2", {}, "Phases"), h("p", { class: "sub" }, "Optional. Leave empty to use a suggested split."), ed.el,
     h("div", { class: "row" }, h("button", { type: "button", class: "ghost small", onclick: () => ed.add() }, "+ Add phase"), h("button", { type: "button", class: "ghost small", onclick: suggest }, "Suggest a split")),
     err, h("div", { class: "row" }, h("button", { type: "submit" }, "Save season"), h("button", { type: "button", class: "ghost", onclick: () => go(back) }, "Cancel"))));
 }
@@ -706,7 +793,7 @@ function editPhases(season) {
     ev.preventDefault(); err.textContent = "";
     try { await api(`/seasons/${season.id}/phases`, { method: "PUT", body: ed.get() }); toast("Phases saved"); S.tab = "admin"; await selectSquad(S.squad.id); }
     catch (x) { err.textContent = x.message; }
-  } }, h("h1", {}, "Phases – " + season.name), h("p", { class: "sub" }, `${fdate(season.start_date)} to ${fdate(season.end_date)}. Phases must sit inside the season, must not overlap, and each type is used once.`), ed.el,
+  } }, h("h1", {}, "Phases – " + season.name), h("p", { class: "sub" }, `${fdate(season.start_date)} to ${fdate(season.end_date)}. Phases must fit inside the season without overlapping.`), ed.el,
     h("div", { class: "row" }, h("button", { type: "button", class: "ghost small", onclick: () => ed.add() }, "+ Add phase"), h("button", { type: "button", class: "ghost small", onclick: suggest }, "Replace with a suggested split")),
     err, h("div", { class: "row" }, h("button", { type: "submit" }, "Save phases"), h("button", { type: "button", class: "ghost", onclick: () => go("admin") }, "Cancel"))));
 }
@@ -716,7 +803,7 @@ async function adminTab() {
   const [users, squads, requests] = await Promise.all([api("/admin/users"), api("/admin/squads"), api("/admin/signup-requests")]);
   const staffLists = await Promise.all(squads.map((s) => api(`/admin/squads/${s.id}/staff`)));
   $("#main").replaceChildren(h("h1", {}, "Admin"),
-    h("p", { class: "sub" }, "Only administrators can sign in for now. Coaches, S&C coaches and physiotherapists can be added as staff: they appear in the plan as the responsible people but cannot sign in yet."),
+    h("p", { class: "sub" }, "Only administrators can sign in for now. Other staff can still be added for planning."),
     requests.length ? requestsCard(requests) : null, squadsCard(squads, staffLists, users), seasonsCard(), usersCard(users));
 }
 
@@ -734,18 +821,18 @@ function requestsCard(requests) {
       h("div", {}, h("strong", {}, r.full_name), " ", h("span", { class: "chip" }, "asked for " + SIGNUP_ROLE_LABEL[r.role]), h("br"),
         h("span", { class: "sub" }, `${r.email} · ${new Date(r.created_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`),
         r.signup_note ? h("p", { class: "quote" }, r.signup_note) : null,
-        r.role_can_sign_in ? null : h("p", { class: "hint warn" }, "This role cannot sign in yet (SLC_ENABLED_ROLES). Approving still lets you assign them as squad staff."), e2),
+        r.role_can_sign_in ? null : h("p", { class: "hint warn" }, "This role cannot sign in yet (SLC_ENABLED_ROLES)."), e2),
       h("div", { class: "row" }, role,
         h("button", { class: "small", onclick: () => act("approve", { role: role.value }, `${r.full_name} approved`)() }, "Approve"),
         h("button", { class: "small ghost danger", onclick: () => confirm(`Reject the request from ${r.full_name}?`) && act("reject", null, "Request rejected")() }, "Reject")));
   });
   return h("div", { class: "card attention" }, h("h2", {}, `Access requests (${requests.length})`),
-    h("p", { class: "sub" }, "People who asked for an account. Check that you know them before approving; you can change the role."), h("div", { class: "list" }, rows));
+    h("p", { class: "sub" }, "Approve only people you know. You can change the role."), h("div", { class: "list" }, rows));
 }
 
 function squadsCard(squads, staffLists, users) {
   const candidates = users.filter((u) => u.role !== "player" && u.is_active && u.approval_status === "approved");
-  const age = h("select", {}, [["U15", "Under 15"], ["U17", "Under 17"]].map(([v, t]) => h("option", { value: v }, t)));
+  const age = h("select", {}, [["U15", "Under 15"], ["U17", "Under 17"], ["U19", "Under 19"]].map(([v, t]) => h("option", { value: v }, t)));
   const name = h("input", { required: true, maxLength: 200 }), prov = h("input", { required: true, maxLength: 100 });
   const err = h("div", { class: "err", role: "alert" });
   const create = h("form", { onsubmit: async (e) => {
@@ -870,7 +957,7 @@ async function planTab(rolesParam) {
     h("div", { class: "card" }, h("h3", {}, "Fitness testing"), plan.testing.map((t) => kv(t.test, `${fdate(t.from)} – ${fdate(t.to)} (${t.source})`))),
     h("div", { class: "card" }, h("h3", {}, "Staff"), kv("Coach(es)", plan.staff.coach.join(", ") || "To be assigned"), kv("S&C coach(es)", plan.staff.sc_coach.join(", ") || "To be assigned"), kv("Physiotherapist(s)", plan.staff.physio.join(", ") || "To be assigned")),
     h("h2", {}, "Plan"), h("div", { class: "grid" }, field("Development area", fArea), field("Player group", fGroup)), rowsBox,
-    h("h2", {}, "Role programmes"), h("p", { class: "sub" }, "Exercises and activities from the supplied list. Which phase each is used in is a proposal for the coaches to confirm."),
+    h("h2", {}, "Role programmes"), h("p", { class: "sub" }, "Phase use is a proposal for coaches to confirm."),
     plan.roles.map((r) => h("details", {}, h("summary", {}, ROLE[r]), Object.keys(PHASE_NAME).filter((ph) => plan.phases.some((p) => p.phase_type === ph)).map((ph) => {
       const items = plan.programmes.filter((x) => x.role === r && x.phase === ph);
       return h("div", {}, h("h3", {}, PHASE_NAME[ph]), h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Exercise / activity", "Used for", "Areas improved"].map((c) => h("th", {}, c)))),
@@ -902,7 +989,7 @@ async function workloadTab() {
   const order = { stop: 0, warn: 1, info: 2 };
   rows.sort((a, b) => (order[a.worst_severity] ?? 3) - (order[b.worst_severity] ?? 3) || a.name.localeCompare(b.name));
   $("#main").replaceChildren(h("h1", {}, "Workload"),
-    h("p", { class: "sub" }, "Alerts start a conversation between coach and physiotherapist. They are not a diagnosis. Fast-bowler limits are provisional until SLC / provincial approval."),
+    h("p", { class: "sub" }, "Alerts are prompts for the coach and physio, not a diagnosis. Fast-bowler limits are provisional."),
     h("div", { class: "card" }, h("h2", {}, "Open alerts"), alertList(alerts, ack)),
     h("div", { class: "card" }, h("h2", {}, "Squad overview"), h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {},
       ["Player", "Role", "Availability", "7-day load", "Load ratio", "Overs (7 d)", "Bowling days", "Status"].map((c) => h("th", {}, c)))),
@@ -910,7 +997,7 @@ async function workloadTab() {
         h("td", {}, r.name), h("td", {}, ROLE[r.role]), h("td", {}, h("span", { class: "chip " + r.availability }, r.availability)),
         h("td", {}, r.acute_load_7d), h("td", {}, r.acwr == null ? "needs 3 weeks" : r.acwr),
         h("td", {}, BOWLS.includes(r.role) ? r.overs_7d : "–"), h("td", {}, BOWLS.includes(r.role) ? r.bowling_days_7d : "–"), h("td", {}, sevChip(r.worst_severity))))))),
-      h("p", { class: "sub" }, "Load = session RPE × minutes. Load ratio = last 7 days ÷ the 4-week weekly average; it needs three weeks of logged sessions.")));
+      h("p", { class: "sub" }, "Load = RPE × minutes. Load ratio = 7-day ÷ 4-week average (needs 3 weeks of logs).")));
 }
 
 function weekBars(weeks, chronic) {
@@ -938,7 +1025,7 @@ async function workloadCard(p, host) {
         tone: st ? { "c-critical": "critical", "c-warning": "warning", "c-good": "good" }[st[1]] : null }); })(),
       Charts.stat({ label: "Vs last week", value: s.vs_last_week_pct == null ? "–" : (s.vs_last_week_pct > 0 ? "+" : "") + s.vs_last_week_pct + "%",
         sub: s.month_vs_last_month_pct == null ? "month: –" : `month ${s.month_vs_last_month_pct > 0 ? "+" : ""}${s.month_vs_last_month_pct}%` })),
-    h("h3", {}, "Weekly load, last 8 weeks"), h("p", { class: "sub" }, "Session RPE × minutes. This week is highlighted; the line is the 4-week weekly average."),
+    h("h3", {}, "Weekly load, last 8 weeks"),
     weekBars(s.weekly_loads_oldest_first, s.chronic_weekly_load_28d));
   if (BOWLS.includes(p.role)) host.append(h("h3", {}, "Bowling, last 7 days"), h("div", { class: "sub" },
     `${b.overs_7d} overs on ${b.days_bowled_7d.length} day(s).` + (b.limits ? ` Limits: ${b.limits.max_spell_overs ?? "–"} per spell, ${b.limits.max_match_day_overs ?? "–"} per day, ${b.limits.max_bowling_days_week ?? "–"} days a week.` : " No automatic limits for this player. A coach can set them.")));
@@ -1002,7 +1089,7 @@ function wellnessForm(p) {
     for (const [k, el] of [["soreness", f.sore], ["fatigue", f.fat], ["sleep_quality", f.sq], ["sleep_hours", f.sh], ["recovery", f.rec]]) if (el.value !== "") b[k] = Number(el.value);
     try { await api(`/players/${p.id}/wellness`, { method: "POST", body: b }); toast("Wellness saved"); go("players"); } catch (x) { err.textContent = x.message; }
   } }, h("h1", {}, "Daily wellness – " + p.full_name),
-    h("p", { class: "sub" }, "Numbers only. For soreness and fatigue, 10 is the worst. For sleep quality and recovery, 10 is the best. Pain details are for the physiotherapist and are not recorded here."),
+    h("p", { class: "sub" }, "Soreness and fatigue: 10 = worst. Sleep and recovery: 10 = best. Pain details go to the physio, not here."),
     h("div", { class: "grid" }, field("Date", f.date), field("Soreness (1-10)", f.sore), field("Fatigue (1-10)", f.fat), field("Sleep quality (1-10)", f.sq), field("Sleep (hours)", f.sh), field("Recovery (1-10)", f.rec)),
     h("label", { class: "inline" }, f.pain, "Pain reported (the physiotherapist will be alerted)"), err,
     h("div", { class: "row" }, h("button", { type: "submit" }, "Save"), h("button", { type: "button", class: "ghost", onclick: () => go("players") }, "Cancel"))));
@@ -1046,16 +1133,27 @@ function windowPicker(current, onchange) {
     WINDOWS.map(([k, v]) => h("option", { value: k, selected: k === current }, v)));
 }
 
+function ageNormsCard(n, ag) {
+  return h("details", { class: "card" }, h("summary", {}, `Age references · ${ag}`),
+    h("p", { class: "sub" }, "Provisional reference points for boys, from published youth data where it exists. Replace with SLC's own data over time."),
+    h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Test", "Developing", "Expected", "Strong", "Source"].map((c) => h("th", {}, c)))),
+      h("tbody", {}, n.tests.map((t) => { const a = t.ages[ag] || t.ages.U15;
+        return h("tr", {}, h("td", {}, `${t.label} (${t.unit})`), h("td", {}, a.developing), h("td", {}, h("strong", {}, a.expected)), h("td", {}, a.strong),
+          h("td", { class: "sub" }, t.quality)); })))));
+}
+
 function areaTable(cat) {
   if (!cat.areas.length) return null;
-  return h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Area", "Test", "Trial 1", "Trial 2", "Trial 3", "Best", "Rank in level", "Area rank"].map((c) => h("th", {}, c)))),
+  return h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Area", "Test", "Trial 1", "Trial 2", "Trial 3", "Best", "Rank in level", "Area rank", "For age"].map((c) => h("th", {}, c)))),
     h("tbody", {}, cat.areas.flatMap((a) => a.tests.map((t, i) => h("tr", {},
       h("td", {}, i === 0 ? a.label : ""), h("td", {}, `${t.label} (${t.unit})`), ...t.trials_display.map((d) => h("td", {}, d ?? "–")), h("td", {}, h("strong", {}, t.display ?? "–")),
-      h("td", {}, t.percentile == null ? "–" : t.percentile), h("td", {}, i === 0 && a.percentile != null ? a.percentile : "")))))));
+      h("td", {}, t.percentile == null ? "–" : t.percentile), h("td", {}, i === 0 && a.percentile != null ? a.percentile : ""),
+      h("td", {}, t.age ? h("span", { class: "chip age-" + t.age.band, title: `${t.age.age_group}: developing ${t.age.developing} · expected ${t.age.expected} · strong ${t.age.strong} ${t.age.unit}` +
+        (t.age.quality === "estimate" ? " (estimate)" : "") }, t.age.label) : "–")))))));
 }
 
 const AREA_STATUS = { priority: ["Priority", "warn", "c-s2"], solid: ["Solid", "info", "c-s1"], strength: ["Strength", "ok", "c-s3"], untested: ["Not tested", "", "c-muted"] };
-const GOAL_KIND = { test: "Test target", maintain: "Keep", skill: "Cricket skill", habit: "Daily habit", rating: "Coach rating" };
+const GOAL_KIND = { test: "Test target", maintain: "Keep", skill: "Cricket skill", role_skill: "Role skill", habit: "Daily habit", rating: "Coach rating" };
 const PHASE_CLS = { pre_season: "c-s1", pre_competition: "c-s3", in_season: "c-s2", transition: "c-muted" };
 
 const PROG_CHIP = { progressed: ["Progressed", "ok"], at_target: ["At target", "ok"], on_track: ["On track", "ok"], held: ["Hold", "warn"],
@@ -1066,7 +1164,7 @@ function planView(plan, ctx = {}) {
   const li = (...k) => h("li", {}, ...k);
   const ed = !!ctx.editing, edit = ctx.edit || (() => {});
   const progOf = (ph, a, e) => plan.progress && plan.progress.exercises[`${ph}|${a}|${e}`];
-  const out = [h("p", { class: "sub" }, "Built for this player from their own test ranks, the coach's ratings, growth, training history and readiness. A proposal for the coach to review.")];
+  const out = [h("p", { class: "sub" }, "Personal plan · a proposal for the coach to review.")];
   if (plan.coach_note || ed) out.push(ed
     ? h("label", {}, "Coach note (saved with the version)", h("textarea", { rows: 2, maxLength: 2000, value: plan.coach_note || "", onchange: (e) => edit({ type: "note", text: e.target.value }) }))
     : h("div", { class: "coach-note" }, h("strong", {}, "Coach note: "), plan.coach_note));
@@ -1088,7 +1186,7 @@ function planView(plan, ctx = {}) {
       pr.objective ? li(h("span", { class: "k" }, "Player's goal"), pr.objective) : null))));
   if (pr.missing.length) out.push(h("p", { class: "hint warn" }, "This plan would be more personal with: " + pr.missing.join("; ") + "."));
   if (pr.areas.some((a) => a.percentile != null)) out.push(Charts.hbars({ ariaLabel: "Area profile", max: 100, refs: [{ value: 50, label: "middle" }, { value: 70, label: "strength" }],
-    data: pr.areas.map((a) => ({ label: a.label, sub: AREA_STATUS[a.status][0] + (a.trend ? ` · ${a.trend}` : "") + (a.source === "coach rating" ? " · coach rating" : ""),
+    data: pr.areas.map((a) => ({ label: a.label, sub: AREA_STATUS[a.status][0] + (a.trend ? ` · ${a.trend}` : "") + (a.source === "coach rating" ? " · coach rating" : a.source === "age reference" ? " · age reference" : a.age_label ? ` · ${a.age_label.toLowerCase()} for age` : ""),
       value: a.percentile, cls: AREA_STATUS[a.status][2], display: a.percentile == null ? "–" : Charts.num(a.percentile, 1),
       tip: [a.label, a.percentile == null ? "Not ranked" : `Rank ${a.percentile} of 100`, a.previous_percentile != null ? `Last window: ${a.previous_percentile}` : null,
         a.coach_rating ? `Coach rating ${a.coach_rating}/5` : null, a.importance !== 1 ? `Importance ×${a.importance}` : null, a.note] })) }));
@@ -1105,8 +1203,7 @@ function planView(plan, ctx = {}) {
   if (plan.progress) {
     const ad = plan.progress.adherence;
     out.push(h("h3", {}, "Progress against the plan"),
-      h("p", { class: "sub" }, `Focus sessions in the last 4 weeks: ${ad.done} of ${ad.planned} planned` + (ad.pct != null ? ` (${ad.pct}%)` : "") +
-        ". Doses below move automatically: two good sessions in two weeks add a rep (or a set at the target); pain steps back."),
+      h("p", { class: "sub" }, `Focus sessions, last 4 weeks: ${ad.done} of ${ad.planned}` + (ad.pct != null ? ` (${ad.pct}%)` : "") + ". Doses update automatically from logged sessions."),
       Charts.columns({ ariaLabel: "Focus sessions per week", highlight: -1, height: 90, capAll: true,
         data: ad.weeks.map((w) => ({ label: fdate(w.week_start), value: w.done, cls: w.done >= w.planned && w.planned ? "c-good" : "c-s1",
           tip: [`Week of ${fdate(w.week_start)}`, `${w.done} of ${w.planned} focus sessions`] })) }),
@@ -1116,8 +1213,7 @@ function planView(plan, ctx = {}) {
   // ── load ──
   const presentPhases = [...new Set(plan.weeks.map((w) => w.phase))];
   out.push(h("h3", {}, "Weekly load plan"),
-    h("p", { class: "sub" }, `Starts at ${sm.start_load.toLocaleString()} units a week (${sm.from_logs ? "from the player's own logs" : "estimate: fewer than 3 weeks logged"}). `
-      + `Highest weekly rise ${sm.max_rise_pct}% (cap 10%), highest load ratio ${sm.max_load_ratio ?? "–"} (cap 1.3), ${sm.easy_weeks} easy week(s).`),
+    h("p", { class: "sub" }, `Start ${sm.start_load.toLocaleString()} units/week (${sm.from_logs ? "own logs" : "estimate"}) · max rise ${sm.max_rise_pct}% · max ratio ${sm.max_load_ratio ?? "–"} · ${sm.easy_weeks} easy week(s)`),
     Charts.legend(presentPhases.map((p) => ({ cls: PHASE_CLS[p], label: PHASE_NAME[p] || p }))),
     Charts.columns({ ariaLabel: "Planned load per week", highlight: -1, height: 160,
       data: plan.weeks.map((w) => ({ label: w.week % 4 === 1 ? "W" + w.week : "", value: w.planned_load, cls: PHASE_CLS[w.phase],
@@ -1126,14 +1222,13 @@ function planView(plan, ctx = {}) {
           `Focus work ${w.focus_load} · general ${w.general_load}`, w.flags.length ? w.flags.join("; ") : null] })) }),
     h("p", {}, plan.load_violations.length ? h("strong", { class: "down" }, "Check needed: " + plan.load_violations.join("; ")) : "All weeks are within the limits.",
       sm.match_over_limit_weeks ? h("strong", { class: "down" }, ` ${sm.match_over_limit_weeks} week(s): match load alone is above the weekly limit. Review the match minutes.`) : null),
-    h("p", { class: "sub" }, sm.assumptions),
     h("details", {}, h("summary", {}, "Show the week-by-week load"), h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Week", "Starts", "Phase", "Load", "Matches", "Bowling", "Focus work", "General", "Change", "Ratio", "Notes"].map((c) => h("th", {}, c)))),
       h("tbody", {}, plan.weeks.map((w) => h("tr", {}, h("td", {}, w.week), h("td", {}, fdate(w.start)), h("td", {}, w.phase_label), h("td", {}, w.planned_load.toLocaleString()),
         h("td", {}, w.match_load || "–"), h("td", {}, w.bowl_days ? `${w.bowl_days} x ${w.overs_per_day} ov (${w.spells})` : "–"), h("td", {}, w.focus_load), h("td", {}, w.general_load),
         h("td", {}, w.rise_pct == null ? "–" : (w.rise_pct > 0 ? "+" : "") + w.rise_pct + "%"), h("td", {}, w.load_ratio ?? "–"), h("td", { class: "sub" }, w.flags.join("; ")))))))));
   // ── the programme, phase by phase ──
   out.push(h("h3", {}, "Programme by phase"),
-    h("p", { class: "sub" }, "Sets and reps: start at the first number and add one rep (or one set once the reps reach the target) every two weeks if technique stays good and there is no pain. Hold or step back if the player is sore or tired."));
+    h("p", { class: "sub" }, "Start at the first number; progression is automatic from logged sessions."));
   plan.phases.forEach((ph, i) => {
     const body = [];
     for (const a of ph.areas) {
@@ -1192,7 +1287,7 @@ async function planPanel(p, host, window) {
   const q = (extra = "") => `/players/${p.id}/individual-plan?window=${window}${extra}`;
   const msg = h("div", { class: "err", role: "alert" });
   const load = async (fresh) => {
-    host.replaceChildren(h("div", { class: "sub" }, fresh ? "Building a fresh plan from the latest data…" : "Loading the plan…"));
+    host.replaceChildren(h("div", { class: "sub loading" }, fresh ? "Building a fresh plan from the latest data…" : "Loading the plan…"));
     st.plan = await api(q(fresh ? "&fresh=true" : "")); st.fresh = !!fresh; st.base = fresh ? "fresh" : "saved"; st.edits = []; st.editing = false;
     render();
   };
@@ -1235,7 +1330,7 @@ async function planPanel(p, host, window) {
       st.versions.map((v) => h("li", {}, h("strong", {}, `Version ${v.version}`), ` · ${new Date(v.saved_at).toLocaleString()} · ${v.saved_by || "–"} · from ${v.based_on}`,
         v.edits ? ` · ${v.edits} edit(s)` : "", v.note ? h("div", { class: "sub" }, v.note) : null)))) : null;
     host.replaceChildren(h("h3", {}, "Individual seasonal plan"), bar(), msg, vlist,
-      st.editing ? h("p", { class: "hint" }, "Edit mode: swap, add or remove exercises, change reps and sets, and adjust goal targets. Every change previews at once; nothing is kept until you save a version.") : null,
+      st.editing ? h("p", { class: "hint" }, "Edit mode: changes preview instantly and are kept only when you save a version.") : null,
       ...planView(st.plan, { editing: st.editing, edit: preview, onLog: canEdit && !st.editing ? () => logForm(p, st.plan, () => load(false)) : null }));
   }
   try { await load(false); } catch (x) { host.replaceChildren(h("div", { class: "err" }, x.message)); }
@@ -1256,9 +1351,8 @@ function logForm(p, plan, done) {
   }
   const err = h("div", { class: "err", role: "alert" });
   $("#main").replaceChildren(h("div", { class: "card" }, h("h2", {}, `Log a focus session · ${p.full_name}`),
-    h("p", { class: "sub" }, `${ph.label}. Untick anything not done. Sets and reps start at the current dose. Tick "pain" if the player felt pain: the dose steps back and the physiotherapist should be told.`),
-    h("div", { class: "grid" }, field("Date", date), field("Minutes (optional)", minutes), field("Session RPE (optional)", rpe)),
-    h("p", { class: "sub" }, "With minutes and RPE the session also counts in the workload."),
+    h("p", { class: "sub" }, `${ph.label}. Untick anything not done. Tick pain if felt: the dose steps back and the physio should be told.`),
+    h("div", { class: "grid" }, field("Date", date), field("Minutes (adds to workload)", minutes), field("Session RPE", rpe)),
     h("div", { class: "scroll" }, h("table", { class: "log" }, h("thead", {}, h("tr", {}, ["Done", "Exercise", "Sets", "Reps", "Technique good", "Pain"].map((c) => h("th", {}, c)))),
       h("tbody", {}, rows.map((r) => h("tr", {}, h("td", {}, r.done), h("td", { class: "wrap" }, h("strong", {}, r.e.name), h("div", { class: "sub" }, r.a.label)),
         h("td", {}, r.sets), h("td", {}, r.reps), h("td", {}, r.ok), h("td", {}, r.pain)))))),
@@ -1277,7 +1371,7 @@ function logForm(p, plan, done) {
 
 // ───────────── role skill grids (Development / Adaptability / Progress Status) ─────────────
 async function roleSkillsCard(p, host, kind = "development") {
-  host.replaceChildren(h("h2", {}, "Role skills"), h("div", { class: "sub" }, "Loading…"));
+  host.replaceChildren(h("h2", {}, "Role skills"), h("div", { class: "sub loading" }, "Loading…"));
   let d;
   try { d = await api(`/players/${p.id}/role-skills?kind=${kind}`); } catch (x) { return host.replaceChildren(h("h2", {}, "Role skills"), h("p", { class: "sub" }, x.message)); }
   const canEdit = can("coach", "sc_coach", "admin");
@@ -1297,8 +1391,7 @@ async function roleSkillsCard(p, host, kind = "development") {
   const err = h("div", { class: "err", role: "alert" });
   host.replaceChildren(h("div", { class: "bar" }, h("h2", {}, "Role skills"),
       h("select", { class: "tiny", "aria-label": "Skill sheet", onchange: (e) => roleSkillsCard(p, host, e.target.value) }, d.kinds.map((k) => h("option", { value: k.kind, selected: k.kind === kind }, k.label)))),
-    h("p", { class: "sub" }, (d.last_assessed ? `Last assessed ${fdate(d.last_assessed)}. ` : "Not assessed yet. ") +
-      "Have to improve → goals and drills in the plan; Improving → kept in the drills; Naturally good, Good and Complete → strengths."),
+    h("p", { class: "sub" }, (d.last_assessed ? `Last assessed ${fdate(d.last_assessed)}. ` : "Not assessed yet. ")),
     h("div", { class: "pdp-grid" }, groups),
     canEdit ? h("div", { class: "row" }, h("label", { class: "inline" }, "Assessed on ", date), h("button", { class: "small", onclick: async () => {
       err.textContent = "";
@@ -1312,7 +1405,7 @@ async function roleSkillsCard(p, host, kind = "development") {
 
 // ───────────── PDP development ratings (coach 1-5; feeds the individual plan) ─────────────
 async function pdpCard(p, host) {
-  host.replaceChildren(h("h2", {}, "Development ratings (PDP)"), h("div", { class: "sub" }, "Loading…"));
+  host.replaceChildren(h("h2", {}, "Development ratings (PDP)"), h("div", { class: "sub loading" }, "Loading…"));
   let d;
   try { d = await api(`/players/${p.id}/pdp`); } catch (x) { return host.replaceChildren(h("h2", {}, "Development ratings (PDP)"), h("p", { class: "sub" }, x.message)); }
   const canEdit = can("coach", "sc_coach", "admin");
@@ -1330,7 +1423,7 @@ async function pdpCard(p, host) {
   const err = h("div", { class: "err", role: "alert" });
   host.replaceChildren(h("div", { class: "bar" }, h("h2", {}, "Development ratings (PDP)"),
       h("span", { class: "sub" }, d.last_rated_on ? "Last rated " + fdate(d.last_rated_on) : "Not rated yet")),
-    h("p", { class: "sub" }, "1–2 area to improve · 3 average · 4–5 strength. The latest rating of each skill feeds the individual plan: low ratings become goals and drills, high ones are kept as strengths."),
+    h("p", { class: "sub" }, "1–2 improve · 3 average · 4–5 strength."),
     h("div", { class: "pdp-grid" }, groups),
     canEdit ? h("div", { class: "row" }, h("label", { class: "inline" }, "Rated on ", date), h("button", { class: "small", onclick: async () => {
       err.textContent = "";
@@ -1343,7 +1436,7 @@ async function pdpCard(p, host) {
 }
 
 async function testingCard(p, host, window) {
-  host.replaceChildren(h("h2", {}, "Physical tests (SLC SOP)"), h("div", { class: "sub" }, "Loading…"));
+  host.replaceChildren(h("h2", {}, "Physical tests (SLC SOP)"), h("div", { class: "sub loading" }, "Loading…"));
   let t;
   try { t = await api(`/players/${p.id}/testing` + (window ? `?window=${window}` : "")); }
   catch (x) { return host.replaceChildren(h("h2", {}, "Physical tests (SLC SOP)"), h("div", { class: "sub" }, x.message)); }
@@ -1352,15 +1445,15 @@ async function testingCard(p, host, window) {
   const head = h("div", { class: "bar" }, h("h2", {}, "Physical tests (SLC SOP)"), windowPicker(w, (v) => testingCard(p, host, v)));
   host.replaceChildren(head);
   if (!t.sessions.some((s) => s.window === w)) {
-    host.append(h("div", { class: "sub" }, "No test results for this window yet. They are added by importing the test Excel file (Tests tab)."));
+    host.append(h("div", { class: "sub" }, "No results for this window yet. Import them in the Tests tab."));
   } else {
     const sess = t.sessions.find((s) => s.window === w);
     host.append(h("div", { class: "row" }, bandChip(cat), h("span", { class: "chip" }, sess.level_label), readyChip(t.readiness),
       h("span", { class: "sub" }, `Tested ${sess.test_date ? fdate(sess.test_date) : "–"} · height ${fmt(sess.height_cm)} cm · weight ${fmt(sess.weight_kg)} kg`)),
-      cat.overall != null ? h("p", {}, `Overall score ${cat.overall} of 100, ranked against ${cat.cohort_size} ${sess.level_label} players in this window. Relative to the group only: not a pass or fail mark.`) : null,
+      cat.overall != null ? h("p", {}, `Overall ${cat.overall} of 100 against ${cat.cohort_size} ${sess.level_label} players. Not a pass or fail mark.`) : null,
       cat.note ? h("p", { class: "sub" }, cat.note) : null,
       cat.areas.some((a) => a.percentile != null) ? h("div", { class: "card inner" }, h("h3", {}, "Area profile"),
-        h("p", { class: "sub" }, "Rank inside the player's level (100 = best in the group). The line marks the middle; areas below it are focus areas."),
+        h("p", { class: "sub" }, "Rank within the player's level (100 = best). Below the middle = focus area."),
         Charts.hbars({ ariaLabel: "Area rank inside level", max: 100, refs: [{ value: 50, label: "middle" }],
           data: cat.areas.map((a) => ({ label: a.label, value: a.percentile, cls: a.percentile == null ? "c-muted" : a.percentile < 50 ? "c-s2" : "c-s1",
             display: a.percentile == null ? "not ranked" : Charts.num(a.percentile, 1) + (a.percentile < 50 ? " · focus" : ""),
@@ -1369,7 +1462,7 @@ async function testingCard(p, host, window) {
       cat.focus_areas.length ? h("p", {}, h("strong", {}, "Focus areas (below the middle): "), cat.focus_areas.map((f) => f.label).join(", ")) : (cat.band ? h("p", {}, "No area is below the middle.") : null),
       h("div", { class: "row" },
         h("button", { class: "small", onclick: () => planPanel(p, planHost, w) }, "Show individual plan")),
-      progHost, planHost, h("p", { class: "sub" }, "Results are confidential: coaches and S&C of this squad and admin only. Players do not see them."));
+      progHost, planHost, h("p", { class: "sub" }, "Confidential: squad coaches, S&C and admin only."));
     if (t.sessions.length >= 2) api(`/players/${p.id}/test-progress`).then((pr) => progHost.replaceChildren(progressView(pr))).catch(() => {});
   }
 }
@@ -1400,10 +1493,10 @@ async function testingTab() {
         j.errors.length ? h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Sheet", "Row", "Column", "Problem"].map((c) => h("th", {}, c)))),
           h("tbody", {}, j.errors.map((e) => h("tr", {}, h("td", {}, e.sheet), h("td", {}, e.row), h("td", {}, e.column), h("td", { class: "down" }, e.message)))))) : null,
         !j.saved && j.accepted.length ? h("div", { class: "row" }, h("button", { onclick: async () => { await send(true); testingTab(); } }, `Save ${j.accepted.length} valid row(s)`),
-          h("span", { class: "sub" }, "Rows with problems are not saved. Fix them in the file and upload again.")) : null);
+          h("span", { class: "sub" }, "Rows with problems are not saved.")) : null);
     };
     importHost.replaceChildren(h("h2", {}, "Import test results"),
-      h("ol", { class: "sub" }, h("li", {}, "Download the template (pre-filled with this squad's players)."), h("li", {}, "Fill the trials for each test. Times are mm.ss: 8.25 = 8 min 25 s. Leave a blank where there is no result."),
+      h("ol", { class: "sub" }, h("li", {}, "Download the template."), h("li", {}, "Fill the trials (times as mm.ss, e.g. 8.25). Leave blanks if not tested."),
         h("li", {}, "Upload it, check the preview, then save.")),
       h("div", { class: "row" }, h("button", { class: "small", onclick: () => downloadFile(`/squads/${S.squad.id}/test-template.xlsx?season_id=${S.season.id}&window=${window}`, "test-template.xlsx").catch((x) => toast(x.message)) }, "Download template"),
         file, h("button", { class: "small", onclick: () => send(false).catch((x) => toast(x.message)) }, "Check file")), result);
@@ -1422,12 +1515,13 @@ async function testingTab() {
         data: c.band_names.map((name, i) => { const v = tested.filter((r) => r.band === i + 1).length;
           return { label: `${i + 1} ${name}`, value: v, cls: bandCls[i], tip: [`Band ${i + 1} · ${name}`, `${v} player${v === 1 ? "" : "s"}`] }; }) })
         : h("p", { class: "sub" }, `A band needs at least ${c.min_cohort} players of the same level with results.`)),
-    card("Most common focus areas", "How many players are below the middle in each area.",
+    card("Most common focus areas", "Players below the middle, per area.",
       Charts.hbars({ ariaLabel: "Players per focus area", format: (v) => `${v} player${v === 1 ? "" : "s"}`,
         data: focus.map(([label, v]) => ({ label, value: v, cls: "c-s2" })), empty: "No focus areas yet." })));
   main.insertBefore(charts, table);
+  api("/meta/age-norms").then((n) => main.append(ageNormsCard(n, S.squad.age_group || "U15"))).catch(() => {});
   table.replaceChildren(h("h2", {}, `Categories · ${c.window_label}`),
-    h("p", { class: "sub" }, `Players are ranked only against others of the same level, in 5 bands (${c.band_names.join(", ")}). A band needs at least ${c.min_cohort} players of the same level with results. Readiness comes from the workload alerts and does not change the band.`),
+    h("p", { class: "sub" }, `Ranked within the same level only. A band needs ${c.min_cohort}+ players of a level.`),
     h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Player", "Level", "Band", "Score", "Focus areas", "Readiness"].map((x) => h("th", {}, x)))),
       h("tbody", {}, c.players.map((r) => h("tr", { class: "click", onclick: () => { S.pid = r.player_id; go("players"); } },
         h("td", {}, r.player), h("td", {}, r.level_label || "Not tested"), h("td", {}, r.band ? bandChip(r) : "–"), h("td", {}, r.overall ?? "–"),
@@ -1435,7 +1529,7 @@ async function testingTab() {
   const sp = await api(`/squads/${S.squad.id}/seasons/${S.season.id}/test-progress`);
   if (sp.windows_with_results.length >= 2) {
     prog.replaceChildren(h("h2", {}, "Progress since the first test"),
-      h("p", { class: "sub" }, "Each player against their own earlier results. Bands are relative to the group, so a player can improve and keep the same band."),
+      h("p", { class: "sub" }, "Each player against their own earlier results."),
       h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Player", "Band movement", "Tests improved", "Below middle before, not now", "Newly below middle"].map((x) => h("th", {}, x)))),
         h("tbody", {}, sp.players.map((r) => h("tr", { class: "click", onclick: () => { S.pid = r.player_id; go("players"); } },
           h("td", {}, r.player), h("td", {}, r.band_text ?? "–"), h("td", {}, r.tests_compared ? `${r.tests_improved} of ${r.tests_compared}` : "–"),
@@ -1447,4 +1541,4 @@ async function testingTab() {
 // ───────────── boot ─────────────
 $("#logout").addEventListener("click", signOut);
 S.token = store.get();
-S.token ? start() : showLogin();
+splash().then(() => (S.token ? start() : showLogin(location.hash === AUTH_HASH.signup ? "signup" : "signin")));

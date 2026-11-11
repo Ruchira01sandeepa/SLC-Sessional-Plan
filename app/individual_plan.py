@@ -35,12 +35,14 @@ from .plan_load import LOAD_FACTOR, plan_weeks, verify
 from .session_plans import PHASE_LABEL
 from .test_battery import AREA_LABEL, WINDOW_LABEL, WINDOWS
 
+# Kinds of work for each area: the MAIN kinds first, then FOUNDATION kinds that build the same quality in phases where the main
+# work is not allowed (e.g. no sprinting in pre-season, recovery-only transition). Every weak area is worked in every phase.
 AREA_KINDS = {
-    "endurance": ["aerobic", "repeat_sprint"],
-    "power": ["plyometric_power", "leg_strength", "landing"],
-    "upper_strength": ["upper_strength", "shoulder_prehab", "grip_wrist"],
-    "speed": ["speed", "plyometric_power"],
-    "agility": ["agility", "landing"],
+    "endurance": ["aerobic", "repeat_sprint", "agility"],                                       # + multi-direction repeated efforts
+    "power": ["plyometric_power", "leg_strength", "landing", "mobility_balance"],
+    "upper_strength": ["upper_strength", "shoulder_prehab", "grip_wrist", "rotation_power"],     # + medicine-ball pushes and throws
+    "speed": ["speed", "plyometric_power", "leg_strength", "agility", "mobility_balance"],       # + force production and quick feet
+    "agility": ["agility", "landing", "mobility_balance"],
     "core": ["trunk_stability", "rotation_power"],
 }
 SESSIONS = {"pre_season": 2, "pre_competition": 2, "in_season": 1, "transition": 1}
@@ -49,6 +51,21 @@ BOWLER_ROLES = {"fast_bowler", "spin_bowler", "all_rounder"}
 TOTAL_SLOTS = 12                  # exercise slots per phase, shared between the areas
 PRIORITY_SHARE = 0.60             # share of the slots for areas below the middle (when there are also areas at or above it)
 MIDDLE = 50.0
+# Shown when a priority area can only be trained through its foundations in a phase (its main kinds are not allowed yet)
+MAIN_KINDS = {"endurance": {"aerobic", "repeat_sprint"}, "power": {"plyometric_power", "leg_strength"}, "upper_strength": {"upper_strength"},
+              "speed": {"speed", "plyometric_power"}, "agility": {"agility"}, "core": {"trunk_stability", "rotation_power"}}
+FOUNDATION_NOTE = {
+    ("speed", "pre_season"): "Pre-season builds the base for speed: single-leg strength and hip drive for a faster first step, and quick, "
+                             "coordinated feet. Sprints and jumps start in pre-competition.",
+    ("speed", "transition"): "Transition is recovery: balance and mobility keep the base for speed without sprinting.",
+    ("power", "transition"): "Transition is recovery: balance and mobility keep the base for leg power without jumping or heavy work.",
+    ("agility", "transition"): "Transition is recovery: balance and mobility keep the base for agility without fast changes of direction.",
+}
+
+
+def foundation_note(area: str, label: str, phase: str) -> str:
+    return FOUNDATION_NOTE.get((area, phase)) or (f"The main {label.lower()} work is not used in {PHASE_LABEL[phase].lower()}, "
+                                                  "so this phase builds its foundations.")
 ALTERNATIVES = 6                  # next-best exercises kept per area so a coach can swap one in
 GROWTH_PEAK_FACTOR = 1.25        # planned peak week as a share of the starting load during the growth spurt (normally 1.40)
 
@@ -57,7 +74,8 @@ TEST_PREFS = {
     "pushups": ("push-up", "chest pass"),
     "inverted_row": ("band row", "pull-up", "pull-apart"),
     "broad_jump": ("broad jump", "countermovement", "split squat", "bulgarian", "glute bridge"),
-    "sprint_20m": ("acceleration", "20 m sprint", "bounding", "power skips", "reaction sprint"),
+    "sprint_20m": ("acceleration", "20 m sprint", "bounding", "power skips", "reaction sprint", "split squat", "romanian", "glute bridge",
+                   "ladder", "lateral shuffle"),
     "shuttle_5_10_5": ("pro-agility", "lateral shuffle", "three-cone", "controlled landing", "t-drill"),
     "plank": ("plank", "side plank", "pallof"),
     "run_2km": ("aerobic", "shuttle"),
@@ -211,6 +229,8 @@ def _pick(area: str, phase: str, role_groups: list[str], n: int, *, priority: bo
             continue
         seen.add(e["name"])
         sc, why = _score(e, e["kind"], kinds.index(e["kind"]), e["name"] in own, ctx)
+        if e["name"] in ctx.get("taken", ()):
+            continue                                               # already in this phase's plan for another area: never listed twice
         cands.append((sc, e, why))
     picked: list[dict] = []
     kind_count: dict[str, int] = {}
@@ -297,6 +317,7 @@ def build_individual_plan(*, player: dict, cat: dict | None, ready: dict, g: dic
     extra = extra or {}
     status = ready["status"]
     factor = LOAD_FACTOR[status]
+    player = {**player, "age_group": player.get("age_group") or g.get("age_group")}
     prof = build_profile(player=player, cat=cat, prev_cat=extra.get("prev_cat"), pdp=extra.get("pdp"), needs=extra.get("needs"),
                          heights=extra.get("heights"), screening=extra.get("screening"))
     gr, ta = prof["growth"], prof["training_age"]
@@ -324,6 +345,9 @@ def build_individual_plan(*, player: dict, cat: dict | None, ready: dict, g: dic
         notes.append("Readiness is Hold: no new load is planned until a coach or physiotherapist clears the player.")
     elif status == "caution":
         notes.append("Readiness is Caution: weekly load is 80% of the player's usual build and focus sessions are shorter.")
+    if any(a["source"] == "age reference" for a in prof["areas"]):
+        notes.append(f"Too few players of this level for a squad ranking, so the areas are placed against the {player.get('age_group') or 'U15'} "
+                     "age references (provisional, see the age reference table).")
     notes.extend(gr["notes"])
     if prof["missing"]:
         notes.append("The plan would be more personal with: " + "; ".join(prof["missing"]) + ".")
@@ -334,18 +358,25 @@ def build_individual_plan(*, player: dict, cat: dict | None, ready: dict, g: dic
     out_phases, used_before = [], {}
     for ph in phases:
         rows = []
+        taken: set[str] = set()                                    # one exercise is used for one area only within a phase
         for a in ordered:
             n = slots.get(a["area"], 1)
             ctx = {"prefs": {t["key"]: TEST_PREFS.get(t["key"], ()) for t in a["tests"]}, "weakest": a["weakest_test"], "test_labels": test_labels,
                    "stage": gr["stage"], "in_spurt": gr["in_spurt"], "new_player": ta["band"] == "new", "seed": seed,
-                   "used_before": used_before.get(a["area"], set()), "area_status": a["status"]}
+                   "used_before": used_before.get(a["area"], set()), "area_status": a["status"], "taken": taken}
             ranked = [] if status == "hold" else _pick(a["area"], ph, role_groups, n + ALTERNATIVES, priority=a["area"] in priority,
                                                         percentile=a["percentile"], status=status, ctx=ctx)
             ex, alternatives = ranked[:n], ranked[n:]              # the next-best fits: what a coach can swap in
+            taken.update(e["name"] for e in ex)
             used_before[a["area"]] = {e["name"] for e in ex} or used_before.get(a["area"], set())
             note = None
+            foundation = foundation_note(a["area"], a["label"], ph) if ex and not any(e["kind"] in MAIN_KINDS[a["area"]] for e in ex) else None
             if status == "hold":
                 note = "On hold."
+            elif foundation and a["area"] in priority:
+                note = foundation
+            elif not ex and (shared := _pick(a["area"], ph, role_groups, 1)):
+                note = f"Covered this phase by exercises already in the plan (for example {shared[0]['name'].lower()})."
             elif not ex:
                 later = next((p for p in PHASE_ORDER[PHASE_ORDER.index(ph) + 1:] if p in present and _pick(a["area"], p, role_groups, 1)), None)
                 earlier = next((p for p in PHASE_ORDER[:PHASE_ORDER.index(ph)] if p in present and _pick(a["area"], p, role_groups, 1)), None)
@@ -417,7 +448,8 @@ def build_individual_plan(*, player: dict, cat: dict | None, ready: dict, g: dic
     goals = []
     for a in [x for x in prof["areas"] if x["status"] == "priority"][:3]:
         if a["weakest_test"]:
-            gl = physical_goal(a, a["weakest_test"], (extra.get("cohort_values") or {}).get(a["weakest_test"]), by)
+            gl = physical_goal(a, a["weakest_test"], (extra.get("cohort_values") or {}).get(a["weakest_test"]), by,
+                               player.get("age_group") or g.get("age_group"), player.get("gender", "male"))
             if gl:
                 goals.append(gl)
         elif a.get("coach_rating"):
@@ -466,7 +498,7 @@ def build_individual_plan(*, player: dict, cat: dict | None, ready: dict, g: dic
             "focus_areas": focus, "areas": [{"area": a["area"], "label": a["label"], "percentile": a["percentile"]} for a in areas],
             "profile": {"age": prof["age"], "growth": gr, "training_age": ta, "importance_source": prof["importance_source"],
                         "objective": prof["objective"], "inputs": prof["inputs"], "missing": prof["missing"],
-                        "areas": [{k: a[k] for k in ("area", "label", "percentile", "status", "trend", "importance", "note", "source")}
+                        "areas": [{k: a.get(k) for k in ("area", "label", "percentile", "status", "trend", "importance", "note", "source", "age_score", "age_label")}
                                   | {"use": a.get("use"), "previous_percentile": a.get("previous_percentile"), "coach_rating": a.get("coach_rating")}
                                   for a in prof["areas"]],
                         "skills": prof["skills"], "role_skills": role_skills},

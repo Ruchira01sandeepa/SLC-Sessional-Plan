@@ -233,3 +233,9 @@ table.log input[type=checkbox]{width:20px;height:20px;min-height:0}
 select.rate.st-have_to_improve{background:color-mix(in srgb,var(--secondary) 30%,var(--card))}
 select.rate.st-improving{background:color-mix(in srgb,var(--brand) 22%,var(--card))}
 select.rate.st-good,select.rate.st-naturally_good,select.rate.st-complete{background:color-mix(in srgb,var(--st-good) 22%,var(--card))}
+
+/* age reference labels */
+.chip.age-below{background:color-mix(in srgb,var(--secondary) 30%,var(--card))}
+.chip.age-developing{background:color-mix(in srgb,var(--secondary) 14%,var(--card))}
+.chip.age-on_track{background:color-mix(in srgb,var(--brand) 22%,var(--card))}
+.chip.age-strong{background:color-mix(in srgb,var(--st-good) 22%,var(--card))}

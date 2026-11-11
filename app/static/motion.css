@@ -1,0 +1,79 @@
+/* Motion: short, purposeful animations. Everything here is switched off for "reduce motion" and for printing. */
+:root{--ease-out:cubic-bezier(.2,.8,.2,1);--ease-spring:cubic-bezier(.34,1.4,.64,1)}
+
+@keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+@keyframes grow-x{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@keyframes grow-y{from{transform:scaleY(0)}to{transform:scaleY(1)}}
+@keyframes pop{0%{opacity:0;transform:scale(.6)}100%{opacity:1;transform:scale(1)}}
+@keyframes sweep{from{opacity:0;transform:rotate(-25deg) scale(.92)}to{opacity:1;transform:none}}
+@keyframes shimmer{from{background-position:-200% 0}to{background-position:200% 0}}
+@keyframes pulse-ring{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--st-critical) 45%,transparent)}100%{box-shadow:0 0 0 8px transparent}}
+@keyframes drift{0%,100%{transform:translate(0,0)}50%{transform:translate(-18px,-14px)}}
+
+/* ───── views: each tab's content rises in, cards one after another ───── */
+main.view-enter>*{animation:rise .38s var(--ease-out) backwards}
+main.view-enter>*:nth-child(2){animation-delay:.04s}
+main.view-enter>*:nth-child(3){animation-delay:.08s}
+main.view-enter>*:nth-child(4){animation-delay:.12s}
+main.view-enter>*:nth-child(5){animation-delay:.16s}
+main.view-enter>*:nth-child(n+6){animation-delay:.2s}
+.kpis>.stat{animation:rise .4s var(--ease-out) backwards}
+.kpis>.stat:nth-child(2){animation-delay:.05s}.kpis>.stat:nth-child(3){animation-delay:.1s}
+.kpis>.stat:nth-child(4){animation-delay:.15s}.kpis>.stat:nth-child(5){animation-delay:.2s}
+
+/* ───── charts ───── */
+.hb-bar{transform-origin:left center;animation:grow-x .7s var(--ease-out) backwards;animation-delay:calc(var(--i,0) * 45ms + .1s)}
+.cols-bar{transform-origin:bottom center;animation:grow-y .6s var(--ease-out) backwards;animation-delay:calc(var(--i,0) * 30ms + .1s)}
+.cols-cap{animation:fade .3s ease backwards;animation-delay:calc(var(--i,0) * 30ms + .55s)}
+.donut-seg{transform-origin:84px 84px;animation:sweep .6s var(--ease-out) backwards;animation-delay:calc(var(--i,0) * 90ms + .1s)}
+.donut-center{animation:pop .5s var(--ease-spring) backwards;animation-delay:.35s}
+.viz-legend li{animation:fade .4s ease backwards;animation-delay:calc(var(--i,0) * 50ms + .25s)}
+.viz-tip{animation:fade .12s ease backwards}
+
+/* ───── interaction ───── */
+button{transition:background-color .15s,box-shadow .2s,filter .15s,transform .15s var(--ease-out)}
+button:not(.link):not(.hb-row):not(.pw-toggle):not(:disabled):hover{transform:translateY(-1px)}
+button:not(.link):not(.hb-row):not(:disabled):active{transform:translateY(0) scale(.98)}
+.card,.stat,.item,.pp-col,.wk-day{transition:box-shadow .2s ease,transform .2s var(--ease-out),border-color .2s ease}
+.stat:hover,.viz-card:hover,.pp-col:hover{box-shadow:0 6px 18px rgba(13,43,78,.08);transform:translateY(-2px)}
+.item:hover{transform:translateX(2px)}
+.hb-row{transition:background-color .15s ease}
+nav button{position:relative;transition:color .15s ease}
+nav button::after{content:"";position:absolute;left:14px;right:14px;bottom:-3px;height:3px;border-radius:3px 3px 0 0;background:var(--brand-text);
+  transform:scaleX(0);transition:transform .25s var(--ease-out)}
+nav button[aria-current=page]{border-color:transparent}
+nav button[aria-current=page]::after{transform:scaleX(1)}
+nav button:hover::after{transform:scaleX(.4)}
+nav button[aria-current=page]:hover::after{transform:scaleX(1)}
+#toast{transition:transform .35s var(--ease-spring),visibility .35s}
+input,select,textarea{transition:border-color .15s ease,box-shadow .15s ease}
+input:focus,select:focus,textarea:focus{border-color:var(--brand-text)}
+
+/* ───── disclosure: plan phases and details open smoothly ───── */
+details[open]>*:not(summary){animation:rise .3s var(--ease-out) backwards}
+details>summary{transition:background-color .15s ease}
+
+/* ───── status that needs attention ───── */
+.chip.stop,.chip.hold{animation:pulse-ring 1.6s ease-out 3}
+.stat.tone-critical .stat-label::before{animation:pulse-ring 1.6s ease-out infinite}
+
+/* ───── loading placeholders shimmer instead of sitting still ───── */
+.loading{background:linear-gradient(90deg,transparent 0,color-mix(in srgb,var(--brand) 14%,transparent) 50%,transparent 100%);
+  background-size:200% 100%;animation:shimmer 1.4s linear infinite;border-radius:8px}
+
+/* ───── sign-in ───── */
+.auth-brand::after{animation:drift 14s ease-in-out infinite}
+.auth-pitch{animation:rise .6s var(--ease-out) backwards;animation-delay:.1s}
+.auth-points li{animation:rise .5s var(--ease-out) backwards}
+.auth-points li:nth-child(1){animation-delay:.25s}.auth-points li:nth-child(2){animation-delay:.35s}.auth-points li:nth-child(3){animation-delay:.45s}
+.auth-box{animation:rise .5s var(--ease-out) backwards;animation-delay:.05s}
+.seg button{transition:background-color .2s ease,color .2s ease,box-shadow .2s ease}
+.done-mark{animation:pop .5s var(--ease-spring) backwards}
+.meter-bar span{transition:background-color .25s ease}
+
+/* ───── off for reduced motion and print ───── */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none !important;transition:none !important}
+}
+@media print{*,*::before,*::after{animation:none !important;transition:none !important}}
