@@ -234,7 +234,7 @@ def test_endpoint_access_and_errors(client, world):
     assert client.get(url).status_code == 401
     short = make_season(client, world, name="short", start_date="2028-01-01", end_date="2028-01-20")
     r = client.get(f"/squads/{world['squad_a']}/seasons/{short}/seasonal-workbook.xlsx", headers=H(world, "admin"))
-    assert r.status_code == 422 and "shorter than 4 weeks" in r.json()["detail"]
+    assert r.status_code == 200                                  # short seasons (tournaments) are supported
 
 
 def test_endpoint_includes_calendar_matches_and_no_medical_text(client, world, db):

@@ -66,7 +66,9 @@ def test_phase_suggestion_endpoint(client, world):
     ph = r.json()
     assert [p["phase_type"] for p in ph] == ["pre_season", "pre_competition", "in_season", "transition"]
     assert ph[0]["start_date"] == "2026-09-01" and ph[-1]["end_date"] == "2027-06-30"
-    assert client.get("/season-phase-suggestion?start_date=2026-09-01&end_date=2026-09-20", headers=H(world, "admin")).status_code == 422
+    short = client.get("/season-phase-suggestion?start_date=2026-09-01&end_date=2026-09-20", headers=H(world, "admin")).json()
+    assert [p["phase_type"] for p in short] == ["in_season"]                         # a tournament: one Competition phase
+    assert client.get("/season-phase-suggestion?start_date=2026-09-20&end_date=2026-09-01", headers=H(world, "admin")).status_code == 422
 
 
 @pytest.mark.parametrize("start,end", [("2026-09-01", "2026-09-28"), ("2026-09-01", "2026-12-15"), ("2026-09-01", "2027-06-30"), ("2026-02-27", "2026-04-02")])
@@ -327,10 +329,12 @@ def test_empty_squad_plans_every_role(client, world, seeded):
     assert len(p["roles"]) == 5 and any("no players yet" in n for n in p["notes"])
 
 
-def test_short_season_cannot_be_planned_without_phases(client, world, seeded):
+def test_short_season_without_phases_is_planned_as_competition(client, world, seeded):
     w = world
     r = client.post(f"/squads/{w['squad_a']}/seasons", json={"name": "Short", "start_date": "2030-01-01", "end_date": "2030-01-20"}, headers=H(w, "admin"))
-    assert client.get(plan_url(w, r.json()["id"]), headers=H(w, "admin")).status_code == 422
+    res = client.get(plan_url(w, r.json()["id"]), headers=H(w, "admin"))
+    assert res.status_code == 200 and res.json()["phases_source"] == "suggested"
+    assert [p["phase_type"] for p in res.json()["phases"]] == ["in_season"]
 
 
 # ───────────── save, status, review ─────────────

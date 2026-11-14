@@ -64,8 +64,7 @@ def test_macro_blocks_stay_inside_phases_and_are_never_one_week():
 
 
 def test_short_and_phaseless_seasons():
-    with pytest.raises(ValueError):
-        grid(end=date(2027, 1, 20))
+    assert grid(end=date(2027, 1, 20))["weeks"] == 3                                # short season (tournament) works
     with pytest.raises(ValueError):
         build_grid(squad_name="x", season={"name": "s", "start_date": date(2027, 1, 1), "end_date": date(2027, 6, 1)}, phases=[], events=[], generated_on=date(2027, 1, 1))
     g = grid(end=date(2027, 1, 28))                                                  # exactly four weeks still works
@@ -243,10 +242,27 @@ def test_access_rules(client, world):
     assert client.get(f"/squads/{world['squad_a']}/seasons/{other}/annual-plan.xlsx", headers=H(world, "admin")).status_code == 404   # season of another squad
 
 
-def test_short_season_gives_readable_error(client, world):
-    sid = season(client, world, end_date="2027-01-20")
+def test_short_season_is_a_tournament_plan(client, world):
+    """A season under 4 weeks (e.g. a 10-day tournament) gets a plan: one Competition phase, no suggested test weeks."""
+    sid = season(client, world, end_date="2027-01-10")
     r = client.get(f"/squads/{world['squad_a']}/seasons/{sid}/annual-plan.xlsx", headers=H(world, "admin"))
-    assert r.status_code == 422 and "shorter than 4 weeks" in r.json()["detail"]
+    assert r.status_code == 200
+    g = client.get(f"/squads/{world['squad_a']}/seasons/{sid}/annual-plan", headers=H(world, "admin")).json()
+    assert g["weeks"] == 2 and set(g["kinds"]) == {"competition"}
+    assert g["test_weeks"] == [False, False] and g["tests_source"] == "none"
+
+
+def test_short_season_phase_suggestion_is_one_competition_phase():
+    sp = suggest_phases(date(2026, 11, 26), date(2026, 12, 5))
+    assert [(p["phase_type"], p["start_date"], p["end_date"]) for p in sp] == [("in_season", date(2026, 11, 26), date(2026, 12, 5))]
+    assert [p["phase_type"] for p in suggest_phases(date(2027, 1, 1), date(2027, 1, 28))] == ["pre_season", "pre_competition", "in_season", "transition"]
+    with pytest.raises(ValueError):
+        suggest_phases(date(2026, 12, 5), date(2026, 11, 26))
+
+
+def test_one_week_tournament_grid():
+    g = grid(date(2026, 11, 26), date(2026, 11, 30), phases=[{"phase_type": "in_season", "start_date": date(2026, 11, 26), "end_date": date(2026, 11, 30)}])
+    assert g["weeks"] == 1 and g["kinds"] == ["competition"] and g["season_end"] == date(2026, 11, 30)
 
 
 def test_text_is_never_a_formula(client, world, db):

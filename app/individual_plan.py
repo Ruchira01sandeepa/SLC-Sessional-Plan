@@ -474,6 +474,8 @@ def build_individual_plan(*, player: dict, cat: dict | None, ready: dict, g: dic
     reviews = []
     for a, b, num in g.get("macros", []):
         end = g["week_starts"][b] + timedelta(days=6)
+        if g.get("season_end"):
+            end = min(end, g["season_end"])                          # the last block can be shorter than a week
         reviews.append({"date": end, "what": f"End of block {num}: check technique, soreness and whether reps reached the target; progress, hold or step back."})
     for w, on in enumerate(g["test_weeks"]):
         if on:

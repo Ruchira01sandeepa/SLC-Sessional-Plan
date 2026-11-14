@@ -9,10 +9,16 @@ PHASE_FOCUS = {
 }
 
 
+SHORT_SEASON_DAYS = 28             # below this a season is a tournament / short block, not a full four-phase season
+
+
 def suggest_phases(start: date, end: date) -> list[dict]:
     total = (end - start).days + 1
-    if total < 28:
-        raise ValueError("A season shorter than 4 weeks cannot be split into four phases")
+    if total < 1:
+        raise ValueError("The season ends before it starts")
+    if total < SHORT_SEASON_DAYS:
+        # A tournament or short competition block: one Competition phase for the whole season (the admin can change it).
+        return [{"phase_type": "in_season", "start_date": start, "end_date": end, "focus": PHASE_FOCUS["in_season"]}]
     w = total / 7
     b1 = max(1, round(w * 0.25))
     b2 = max(b1 + 1, round(w * 0.40))

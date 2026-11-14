@@ -16,6 +16,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 from .age_groups import profile as age_profile
+from .season_phases import SHORT_SEASON_DAYS
 
 # The five columns-of-meaning on the sheet's "Phases" row. Our season has four phases; the preparation phase is split
 # into general and special preparation like the supplied sheet.
@@ -117,8 +118,8 @@ def build_grid(*, squad_name: str, season: dict, phases: list[dict], events: lis
     s0, e0 = season["start_date"], season["end_date"]
     prof = age_profile(age_group)
     peak = prof.load_peak
-    if (e0 - s0).days + 1 < 28:
-        raise ValueError("A season shorter than 4 weeks cannot be shown as an annual plan")
+    if (e0 - s0).days + 1 < 1:
+        raise ValueError("The season ends before it starts")          # short seasons (a tournament) are fine: one column per week
     if not phases:
         raise ValueError("The season has no phases")
     phases = sorted(phases, key=lambda p: p["start_date"])
@@ -192,7 +193,10 @@ def build_grid(*, squad_name: str, season: dict, phases: list[dict], events: lis
         if ev["event_type"] in ("training", "match") and ev.get("hours"):
             hours[w] += ev["hours"]
     tests_source = "calendar"
-    if not tests:                                               # same suggested times as the seasonal plan's testing schedule
+    short = (e0 - s0).days + 1 < SHORT_SEASON_DAYS
+    if not tests and short:                                     # a tournament: test before it, not during it
+        tests_source = "none"
+    elif not tests:                                             # same suggested times as the seasonal plan's testing schedule
         tests_source = "suggested"
         mid_ph = next((p for p in phases if p["phase_type"] == "in_season"), None)
         mid = (mid_ph["start_date"] + (mid_ph["end_date"] - mid_ph["start_date"]) / 2) if mid_ph else s0 + (e0 - s0) / 2
@@ -240,13 +244,15 @@ def build_grid(*, squad_name: str, season: dict, phases: list[dict], events: lis
         "match_weeks": [w in matches for w in range(n)], "match_counts": match_n, "test_weeks": [w in tests for w in range(n)], "tests_source": tests_source,
         "recovery_weeks": recovery, "kinds": kind, "sections": sections,
         "loading": {"Volume": [LOADING[k][0] for k in kind], "Intensity": [LOADING[k][1] for k in kind], "Load": [LOADING[k][2] for k in kind]},
-        "generated_on": generated_on,
+        "generated_on": generated_on, "season_end": e0,
         "notes": [
             "Weeks start on the season's start date and run in blocks of seven days. The Dates row shows the day of the month each week starts on.",
             f"Percentage is the planned relative training load, not a measurement. Preparation builds from {int(START * 100)}% to {int(peak * 100)}% with a lighter week at the end of each block; "
             f"the supplied rugby sheet peaks higher, so this is lower for {prof.code} players. Coaches adjust it.",
             "A '*' marks a week in which that area is trained. The marks are a proposal for the coaches to confirm and follow the exercise-to-phase mapping used in the seasonal plan.",
             ("Test weeks are the fitness-test events in the calendar." if tests_source == "calendar"
+             else "No test weeks are suggested in a season shorter than 4 weeks (a tournament): test before it starts, or add a fitness-test event to the calendar."
+             if tests_source == "none"
              else "Test weeks are SUGGESTED (first week, middle of the in-season phase, last week) because no fitness-test events are in the calendar."),
             "Medical and Field are marked in every test week. Lab is left empty because the system does not schedule laboratory tests.",
             "Competition marks the weeks with a match in the calendar. Week hours add up the training and match hours in the calendar (blank when none have an end time).",
