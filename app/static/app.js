@@ -972,16 +972,22 @@ async function downloadPlan(q, file = "seasonal-plan.xlsx") {
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
 
+const PLAN_CATS = [["", "Main plan (all areas)"], ["physical", "Physical – Strength & Conditioning"]];
+
 async function planTab(rolesParam) {
   const main = $("#main");
   if (!S.season) return main.replaceChildren(h("h1", {}, "Seasonal plan"), h("div", { class: "card" }, "This squad has no season yet. Create one in Admin → Seasons."));
-  const q = rolesParam ? "?roles=" + encodeURIComponent(rolesParam) : "";
+  const cat = S.planCat || "";
+  const cq = cat ? "category=" + cat : "";
+  const q = rolesParam ? "?roles=" + encodeURIComponent(rolesParam) + (cq ? "&" + cq : "") : (cq ? "?" + cq : "");
   const plan = await api(`/squads/${S.squad.id}/seasons/${S.season.id}/seasonal-plan${q}`);
-  const rq = "?roles=" + encodeURIComponent(plan.roles.join(","));
+  const rq = "?roles=" + encodeURIComponent(plan.roles.join(",")) + (cq ? "&" + cq : "");
+  const catPick = h("select", { "aria-label": "Plan", onchange: (e) => { S.planCat = e.target.value; planTab(rolesParam); } },
+    PLAN_CATS.map(([v, t]) => h("option", { value: v, selected: v === cat }, t)));
   const picked = new Set(plan.roles);
   const roleBoxes = Object.entries(ROLE).map(([k, v]) => ({ k, v, el: h("input", { type: "checkbox", checked: picked.has(k) }) }));
 
-  const fArea = h("select", { "aria-label": "Filter by development area" }, h("option", { value: "" }, "All areas"), ["technical", "tactical", "physical", "mental", "nutrition", "recovery"].map((a) => h("option", { value: a }, cap(a))));
+  const fArea = h("select", { "aria-label": "Filter by development area" }, h("option", { value: "" }, "All areas"), (plan.category ? plan.category.areas : ["technical", "tactical", "physical", "mental", "nutrition", "recovery"]).map((a) => h("option", { value: a }, cap(a))));
   const fGroup = h("select", { "aria-label": "Filter by player group" }, h("option", { value: "" }, "All groups"), h("option", { value: "all" }, "All players (squad-wide)"), plan.roles.map((r) => h("option", { value: r }, ROLE[r])));
   const rowsBox = h("div", {});
   const renderRows = () => {
@@ -995,10 +1001,10 @@ async function planTab(rolesParam) {
 
   const err = h("div", { class: "err", role: "alert" });
   main.replaceChildren(
-    h("div", { class: "bar" }, h("h1", {}, "Seasonal plan"), seasonPicker(() => planTab(rolesParam))),
+    h("div", { class: "bar" }, h("h1", {}, plan.category ? "Seasonal plan – " + plan.category.label : "Seasonal plan"), h("div", { class: "row" }, catPick, seasonPicker(() => planTab(rolesParam)))),
     h("p", { class: "sub" }, `${plan.squad} · season ${plan.season.name} · ${fdate(plan.season.start_date)} – ${fdate(plan.season.end_date)}`),
     h("div", { class: "row" },
-      can("coach", "admin") ? h("button", { onclick: async () => { err.textContent = ""; try { const r = await api(`/squads/${S.squad.id}/seasons/${S.season.id}/seasonal-plan/save${rq}`, { method: "POST" }); toast(`Plan saved (${r.new} new, ${r.updated} updated)`); planTab(rolesParam); } catch (x) { err.textContent = x.message; } } }, plan.saved ? "Re-save plan" : "Save plan") : null,
+      can("coach", "admin") ? h("button", { onclick: async () => { err.textContent = ""; try { const r = await api(`/squads/${S.squad.id}/seasons/${S.season.id}/seasonal-plan/save${rq}`, { method: "POST" }); toast(`Plan saved (${r.new} new, ${r.updated} updated)`); planTab(rolesParam); } catch (x) { err.textContent = x.message; } } }, (plan.saved ? "Re-save " : "Save ") + (plan.category ? "S&C rows" : "plan")) : null,
       h("button", { class: "ghost", onclick: async () => { err.textContent = ""; try { await downloadPlan(rq); } catch (x) { err.textContent = x.message; } } }, "Download Excel"),
       h("button", { class: "ghost", onclick: async () => { err.textContent = ""; try { await downloadPlan(rq, "seasonal-workbook.xlsx"); } catch (x) { err.textContent = x.message; } } }, "Download plan workbook")),
     err,
@@ -1341,13 +1347,13 @@ const catTable = (cols, rows) => h("div", { class: "scroll" }, h("table", {}, h(
 
 async function categoryPanel(p, host, window) {
   host.replaceChildren(h("div", { class: "sub loading" }, "Building the category plans…"));
-  const d = await api(`/players/${p.id}/category-plans?window=${window}`);
+  const [d, main] = await Promise.all([api(`/players/${p.id}/category-plans?window=${window}`), api(`/players/${p.id}/individual-plan?window=${window}`)]);
   const body = h("div");
   const tabs = h("div", { class: "row cat-tabs", role: "tablist", "aria-label": "Plan category" });
   const show = (key) => {
     tabs.querySelectorAll("button").forEach((b) => { b.classList.toggle("on", b.dataset.key === key); b.setAttribute("aria-selected", b.dataset.key === key); });
     const c = d.categories.find((x) => x.key === key);
-    body.replaceChildren(...(c.key === "physical" ? scView(c, p, window) : skillCatView(c)));
+    body.replaceChildren(...(c.key === "physical" ? scView(c, p, window, main) : skillCatView(c)));
   };
   d.categories.forEach((c) => tabs.append(h("button", { class: "small ghost" + (c.relevant ? "" : " off"), role: "tab", "data-key": c.key,
     title: c.relevant ? c.title : `${c.title} · for ${c.for.toLowerCase()}`, onclick: () => show(c.key) },
@@ -1357,14 +1363,21 @@ async function categoryPanel(p, host, window) {
   show("physical");
 }
 
-function scView(c, p, window) {
+// The individual plan limited to its physical part: same layout as "Show individual plan".
+function physicalOnly(plan) {
+  const phys = (s) => !/ - /.test(s.label) || s.label.startsWith("Physical - ");          // cricket-skill entries are "Group - skill"
+  return { ...plan, strengths: plan.strengths.filter(phys), priorities: plan.priorities.filter(phys),
+    goals: plan.goals.filter((g) => ["test", "maintain", "rating"].includes(g.kind)), habits: [],
+    phases: plan.phases.map((ph) => ({ ...ph, skills: [], role_skills: [] })) };
+}
+
+function scView(c, p, window, main) {
   const out = [h("div", { class: "bar" }, h("h3", {}, "Physical – Strength & Conditioning plan"),
     h("button", { class: "small", onclick: () => downloadFile(`/players/${p.id}/sc-plan.xlsx?window=${window}`, "SC-plan.xlsx").catch((x) => toast(x.message)) }, "Download S&C plan (Excel)")),
-    h("p", { class: "sub" }, `Growth: ${c.growth} · Experience: ${c.training_age}. A proposal for the coach; stop and refer to the physiotherapist if there is pain.`)];
-  if (c.goals.length) out.push(h("h4", {}, "Goals"), h("ul", {}, c.goals.map((g) => h("li", {}, h("strong", {}, g.label), h("span", { class: "sub" }, ` · by ${g.by}`)))));
-  out.push(h("h4", {}, "Test profile"), catTable(["Area", "Rank in level", "Status", "For age"],
-    c.test_profile.map((a) => [a.label, a.percentile, CAT_STATUS[a.status] || a.status, a.age_label])));
-  out.push(h("p", { class: "sub" }, "PDP – Physical: " + c.pdp.map((x) => `${x.skill} ${x.rating ?? "not rated"}`).join(" · ")));
+    h("p", { class: "sub" }, "The seasonal S&C plan in the same layout as the individual plan (its physical part), followed by the focus sessions and the week-by-week plan."),
+    ...planView(physicalOnly(main)),
+    h("h3", {}, "S&C sessions"),
+    h("p", { class: "sub" }, "PDP – Physical: " + c.pdp.map((x) => `${x.skill} ${x.rating ?? "not rated"}`).join(" · "))];
   for (const ph of c.phases) {
     out.push(h("h3", {}, `${ph.label} · ${ph.sessions_per_week} focus session${ph.sessions_per_week === 1 ? "" : "s"} a week`),
       h("div", { class: "scroll" }, h("table", { class: "week" }, h("tbody", {}, h("tr", {}, ph.typical_week.map((x) => h("td", {}, h("strong", {}, x.day), h("br"), x.items.join(", "))))))));

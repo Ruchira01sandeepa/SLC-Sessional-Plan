@@ -18,7 +18,7 @@ from ..annual_grid_excel import build_grid_workbook
 from ..seasonal_workbook import build_seasonal_workbook
 from ..plan_excel import build_workbook
 from ..season_phases import suggest_phases
-from ..seasonal_plan import PHASE_ORDER, ROLE_ORDER, build_plan
+from ..seasonal_plan import CATEGORY_VIEWS, PHASE_ORDER, ROLE_ORDER, build_plan, category_grid, category_view
 from ..exercises import bowling_types
 
 router = APIRouter(tags=["seasonal plan"])
@@ -121,18 +121,36 @@ def _generate(db: Session, user: User, squad_id: int, season_id: int, roles_para
     return plan, season
 
 
+def _check_category(category: str) -> None:
+    if category not in CATEGORY_VIEWS:
+        raise HTTPException(422, f"Unknown plan category '{category}'. Available: {', '.join(CATEGORY_VIEWS)}")
+
+
+def _view(plan: dict, category: str | None) -> dict:
+    if not category:
+        return plan
+    _check_category(category)
+    return category_view(plan, category)
+
+
 @router.get("/squads/{squad_id}/seasons/{season_id}/seasonal-plan")
-def get_plan(squad_id: int, season_id: int, roles: str | None = Query(None), db: Session = Depends(get_db), user: User = Depends(current_user)):
-    return _generate(db, user, squad_id, season_id, roles, "plan.squad.read")[0]
+def get_plan(squad_id: int, season_id: int, roles: str | None = Query(None), category: str | None = Query(None),
+             db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """The squad's seasonal plan; with category=physical, the same plan limited to Strength & Conditioning."""
+    return _view(_generate(db, user, squad_id, season_id, roles, "plan.squad.read")[0], category)
 
 
 @router.post("/squads/{squad_id}/seasons/{season_id}/seasonal-plan/save")
-def save_plan(squad_id: int, season_id: int, roles: str | None = Query(None), db: Session = Depends(get_db), user: User = Depends(current_user)):
+def save_plan(squad_id: int, season_id: int, roles: str | None = Query(None), category: str | None = Query(None),
+              db: Session = Depends(get_db), user: User = Depends(current_user)):
     """Store the plan as plan items so status and coach review can be tracked. Re-saving refreshes the text but keeps
     status and review; rows that are no longer generated are removed only if nobody has touched them."""
     plan, _ = _generate(db, user, squad_id, season_id, roles, "plan.squad.write")
+    plan = _view(plan, category)
+    areas = set(plan["category"]["areas"]) if plan.get("category") else None          # a category save never touches other rows
     existing = {_key(i.phase_type, i.development_area.value, i.applies_to): i for i in db.scalars(select(PlanItem).where(
-        PlanItem.level == PlanLevel.seasonal, PlanItem.squad_id == squad_id, PlanItem.season_id == season_id))}
+        PlanItem.level == PlanLevel.seasonal, PlanItem.squad_id == squad_id, PlanItem.season_id == season_id))
+        if areas is None or i.development_area.value in areas}
     new = upd = 0
     wanted = set()
     for row in plan["rows"]:
@@ -180,9 +198,11 @@ def update_item(item_id: int, body: ItemUpdate, db: Session = Depends(get_db), u
 
 
 @router.get("/squads/{squad_id}/seasons/{season_id}/seasonal-plan.xlsx")
-def download_plan(squad_id: int, season_id: int, roles: str | None = Query(None), db: Session = Depends(get_db), user: User = Depends(current_user)):
+def download_plan(squad_id: int, season_id: int, roles: str | None = Query(None), category: str | None = Query(None),
+                  db: Session = Depends(get_db), user: User = Depends(current_user)):
     plan, season = _generate(db, user, squad_id, season_id, roles, "plan.squad.read")
-    name = re.sub(r"[^A-Za-z0-9]+", "-", f"seasonal-plan-{plan['squad']}-{season.name}").strip("-") or "seasonal-plan"
+    plan = _view(plan, category)
+    name = re.sub(r"[^A-Za-z0-9]+", "-", f"seasonal-plan-{plan['squad']}-{season.name}" + (f"-{category}" if category else "")).strip("-") or "seasonal-plan"
     audit(db, user, "seasonal_plan.exported", "season", season_id)
     db.commit()
     return Response(build_workbook(plan), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -232,11 +252,16 @@ def download_annual_plan(squad_id: int, season_id: int, db: Session = Depends(ge
 
 
 @router.get("/squads/{squad_id}/seasons/{season_id}/seasonal-workbook.xlsx")
-def download_seasonal_workbook(squad_id: int, season_id: int, roles: str | None = Query(None), db: Session = Depends(get_db), user: User = Depends(current_user)):
-    """Annual plan, load distribution, component distribution and one session plan per role and phase, in one workbook."""
+def download_seasonal_workbook(squad_id: int, season_id: int, roles: str | None = Query(None), category: str | None = Query(None),
+                               db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Annual plan, load distribution, component distribution and one session plan per role and phase, in one workbook.
+    With category=physical the annual-plan sheet keeps only the Physical rows (the session plans are S&C sessions already)."""
     g = _grid(db, user, squad_id, season_id)
+    if category:
+        _check_category(category)
+        g = category_grid(g, category)
     player_roles, bowling = _roles_and_bowling(db, squad_id, roles)
-    name = re.sub(r"[^A-Za-z0-9]+", "-", f"seasonal-plan-workbook-{g['squad']}-{g['season']}").strip("-") or "seasonal-plan-workbook"
+    name = re.sub(r"[^A-Za-z0-9]+", "-", f"seasonal-plan-workbook-{g['squad']}-{g['season']}" + (f"-{category}" if category else "")).strip("-") or "seasonal-plan-workbook"
     audit(db, user, "seasonal_workbook.exported", "season", season_id)
     db.commit()
     return Response(build_seasonal_workbook(g, player_roles, bowling or None), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

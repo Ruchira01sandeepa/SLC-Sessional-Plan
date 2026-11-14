@@ -434,3 +434,32 @@ def test_plan_does_not_leak_medical_data(client, world, planned):
     wb = openpyxl.load_workbook(io.BytesIO(client.get(plan_url(w, planned, ".xlsx"), headers=H(w, "admin")).content))
     cells = " ".join(str(c.value) for ws in wb for row in ws.iter_rows() for c in row if c.value is not None)
     assert "Stress" not in body + cells and "L4" not in body + cells and "Ann" not in cells          # no medical data, no player names
+
+
+# ───────────── category view: Physical (Strength & Conditioning) ─────────────
+def test_physical_category_is_the_same_plan_limited_to_sc(client, world, planned):
+    w, h = world, H(world, "admin")
+    full = client.get(plan_url(w, planned), headers=h).json()
+    phys = client.get(plan_url(w, planned) + "?category=physical", headers=h).json()
+    assert phys["category"]["key"] == "physical" and "category" not in full
+    assert {r["development_area"] for r in phys["rows"]} == {"physical", "recovery"}
+    assert phys["rows"] == [r for r in full["rows"] if r["development_area"] in ("physical", "recovery")]
+    assert phys["programmes"] and {x["category"] for x in phys["programmes"]} == {"physical"}
+    assert phys["phases"] == full["phases"] and phys["testing"] == full["testing"] and phys["workload_rules"] == full["workload_rules"]
+    assert client.get(plan_url(w, planned) + "?category=batting", headers=h).status_code == 422
+    import io
+    import openpyxl
+    x = client.get(plan_url(w, planned, ".xlsx") + "?category=physical", headers=h)
+    assert x.status_code == 200 and "physical" in x.headers["content-disposition"]
+    wb = openpyxl.load_workbook(io.BytesIO(client.get(f"/squads/{w['squad_a']}/seasons/{planned}/seasonal-workbook.xlsx?category=physical", headers=h).content))
+    texts = {c.value for row in wb["Annual plan"].iter_rows() for c in row if isinstance(c.value, str)}
+    assert "Physical" in texts and "Mental" not in texts and "Technical" not in texts
+
+
+def test_saving_the_physical_plan_never_touches_other_rows(client, world, planned):
+    w, h = world, H(world, "admin")
+    assert client.post(plan_url(w, planned, "/save"), headers=h).status_code == 200
+    n_all = len(client.get(plan_url(w, planned), headers=h).json()["rows"])
+    r = client.post(plan_url(w, planned, "/save") + "?category=physical", headers=h).json()
+    assert r["new"] == 0 and r["removed"] == 0 and r["updated"] == len(client.get(plan_url(w, planned) + "?category=physical", headers=h).json()["rows"])
+    assert len([x for x in client.get(plan_url(w, planned), headers=h).json()["rows"] if x["plan_item_id"]]) == n_all

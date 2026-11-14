@@ -59,7 +59,7 @@ def build_workbook(plan: dict) -> bytes:
     ws = wb.active
     ws.title = "Overview"
     s = plan["season"]
-    _title(ws, f"Seasonal plan - {plan['squad']}", f"Season {s['name']}  |  {s['start_date']:%d %b %Y} to {s['end_date']:%d %b %Y}  |  generated {plan['generated_on']:%d %b %Y}")
+    _title(ws, f"Seasonal plan - {plan['squad']}" + (f" - {plan['category']['label']}" if plan.get("category") else ""), f"Season {s['name']}  |  {s['start_date']:%d %b %Y} to {s['end_date']:%d %b %Y}  |  generated {plan['generated_on']:%d %b %Y}")
     r = 4
     _header(ws, r, ["Phase", "Starts", "Ends", "Weeks", "Intensity", "Purpose", "Workload principle", "Matches", "Fitness tests", "Training sessions", "Rest days"],
             [22, 14, 14, 8, 22, 55, 55, 10, 24, 12, 10])

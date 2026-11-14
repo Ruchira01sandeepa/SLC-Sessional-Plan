@@ -398,3 +398,29 @@ def build_plan(*, squad_name: str, season: dict, phases: list[dict], phases_sour
             "Which exercises belong to which phase is a proposal for the coaches to confirm.",
         ] + ([ADDED_DRILLS_NOTE] if any(r in ("batter", "bat_wicketkeeper", "all_rounder") for r in roles) else []),
     }
+
+
+# ───────────── category views: the same seasonal plan, limited to one development category ─────────────
+# Only Physical (Strength & Conditioning) for now. Recovery rows belong to it (the PDP "Physical" group holds Recovery practices).
+CATEGORY_VIEWS = {
+    "physical": {"label": "Physical - Strength & Conditioning", "areas": {"physical", "recovery"}, "programme": {"physical"},
+                 "grid_sections": {"Physical"}},
+}
+
+
+def category_view(plan: dict, key: str) -> dict:
+    """The seasonal plan limited to one category: same phases, testing, staff, workload rules and session template;
+    only that category's plan rows and programme exercises."""
+    v = CATEGORY_VIEWS[key]
+    out = dict(plan)
+    out["category"] = {"key": key, "label": v["label"], "areas": sorted(v["areas"])}
+    out["rows"] = [r for r in plan["rows"] if r["development_area"] in v["areas"]]
+    out["programmes"] = [x for x in plan["programmes"] if x["category"] in v["programme"]]
+    out["notes"] = [f"This is the {v['label']} plan: the main seasonal plan limited to this category. The main plan is unchanged."] + plan["notes"]
+    return out
+
+
+def category_grid(g: dict, key: str) -> dict:
+    """The annual-plan grid with only the category's sections (the week, phase and load rows stay)."""
+    v = CATEGORY_VIEWS[key]
+    return {**g, "title": g["title"] + f" - {v['label'].upper()}", "sections": [sec for sec in g["sections"] if sec["name"] in v["grid_sections"]]}
