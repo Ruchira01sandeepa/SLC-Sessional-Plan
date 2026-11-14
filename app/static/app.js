@@ -1334,6 +1334,69 @@ function planView(plan, ctx = {}) {
   return out;
 }
 
+// ───────────── separate plans per category (Physical = Strength & Conditioning) ─────────────
+const CAT_STATUS = { priority: "Priority", strength: "Strength", solid: "Solid", not_rated: "Not rated yet" };
+const catTable = (cols, rows) => h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, cols.map((c) => h("th", {}, c)))),
+  h("tbody", {}, rows.map((r) => h("tr", {}, r.map((v) => h("td", {}, v ?? "–")))))));
+
+async function categoryPanel(p, host, window) {
+  host.replaceChildren(h("div", { class: "sub loading" }, "Building the category plans…"));
+  const d = await api(`/players/${p.id}/category-plans?window=${window}`);
+  const body = h("div");
+  const tabs = h("div", { class: "row cat-tabs", role: "tablist", "aria-label": "Plan category" });
+  const show = (key) => {
+    tabs.querySelectorAll("button").forEach((b) => { b.classList.toggle("on", b.dataset.key === key); b.setAttribute("aria-selected", b.dataset.key === key); });
+    const c = d.categories.find((x) => x.key === key);
+    body.replaceChildren(...(c.key === "physical" ? scView(c, p, window) : skillCatView(c)));
+  };
+  d.categories.forEach((c) => tabs.append(h("button", { class: "small ghost" + (c.relevant ? "" : " off"), role: "tab", "data-key": c.key,
+    title: c.relevant ? c.title : `${c.title} · for ${c.for.toLowerCase()}`, onclick: () => show(c.key) },
+    c.group + (c.priorities ? ` (${c.priorities})` : ""))));
+  host.replaceChildren(h("div", { class: "card inner" }, h("div", { class: "bar" }, h("h2", {}, "Plans by category"), h("span", { class: "chip" }, d.season ? d.season.name : "")),
+    h("p", { class: "sub" }, d.note + " Greyed categories are not part of this player's role."), tabs, body));
+  show("physical");
+}
+
+function scView(c, p, window) {
+  const out = [h("div", { class: "bar" }, h("h3", {}, "Physical – Strength & Conditioning plan"),
+    h("button", { class: "small", onclick: () => downloadFile(`/players/${p.id}/sc-plan.xlsx?window=${window}`, "SC-plan.xlsx").catch((x) => toast(x.message)) }, "Download S&C plan (Excel)")),
+    h("p", { class: "sub" }, `Growth: ${c.growth} · Experience: ${c.training_age}. A proposal for the coach; stop and refer to the physiotherapist if there is pain.`)];
+  if (c.goals.length) out.push(h("h4", {}, "Goals"), h("ul", {}, c.goals.map((g) => h("li", {}, h("strong", {}, g.label), h("span", { class: "sub" }, ` · by ${g.by}`)))));
+  out.push(h("h4", {}, "Test profile"), catTable(["Area", "Rank in level", "Status", "For age"],
+    c.test_profile.map((a) => [a.label, a.percentile, CAT_STATUS[a.status] || a.status, a.age_label])));
+  out.push(h("p", { class: "sub" }, "PDP – Physical: " + c.pdp.map((x) => `${x.skill} ${x.rating ?? "not rated"}`).join(" · ")));
+  for (const ph of c.phases) {
+    out.push(h("h3", {}, `${ph.label} · ${ph.sessions_per_week} focus session${ph.sessions_per_week === 1 ? "" : "s"} a week`),
+      h("div", { class: "scroll" }, h("table", { class: "week" }, h("tbody", {}, h("tr", {}, ph.typical_week.map((x) => h("td", {}, h("strong", {}, x.day), h("br"), x.items.join(", "))))))));
+    if (!ph.sessions.length) out.push(h("p", { class: "sub" }, "No focus sessions in this phase."));
+    for (const s of ph.sessions) {
+      const rows = [];
+      s.parts.forEach((pt) => pt.items.forEach((it, i) => rows.push([i === 0 ? `${pt.part}${pt.minutes ? ` (${pt.minutes} min)` : ""}` : "", it.name, it.area_label, it.set, it.rep || it.time, it.rest, it.why])));
+      out.push(h("div", { class: "card inner" }, h("div", { class: "bar" }, h("h4", {}, `${s.name}${s.day ? " · " + s.day : ""}`), h("span", { class: "chip" }, `about ${s.minutes} min · ${s.when}`)),
+        s.note ? h("p", { class: "hint warn" }, s.note) : null,
+        catTable(["Part", "Exercise", "Area", "Sets", "Reps / time", "Rest", "Why"], rows)));
+    }
+  }
+  out.push(h("h3", {}, "Week by week"), catTable(["Week", "Starts", "Phase", "Sessions", "Focus load", "Week load", "Dose this week"],
+    c.weeks.map((w) => [w.week, fdate(String(w.start).slice(0, 10)), w.phase_label, w.sessions.join(", ") || "–", w.focus_load, w.planned_load, w.dose_step])));
+  out.push(h("h4", {}, "Rules"), h("ul", {}, c.rules.map((r) => h("li", {}, r))));
+  return out;
+}
+
+function skillCatView(c) {
+  const out = [h("h3", {}, `${c.group} – ${c.title}`), h("p", { class: "sub" }, (c.relevant ? "" : `Not part of this player's role (for ${c.for.toLowerCase()}). `) + c.notes.join(" "))];
+  out.push(catTable(["Skill", "Coach rating (1-5)", "Status"], c.skills.map((s) => [s.skill, s.rating, CAT_STATUS[s.status] || s.status])));
+  if (c.goals.length) out.push(h("h4", {}, "Goals"), h("ul", {}, c.goals.map((g) => h("li", {}, g.label))));
+  for (const ph of c.phases) {
+    out.push(h("h4", {}, ph.label));
+    if (ph.general.length) out.push(h("ul", {}, ph.general.map((t) => h("li", {}, t))));
+    out.push(catTable(c.key === "nutrition" ? ["Item", "Rating", "What to do"] : ["Skill", "Rating", "Drills"],
+      ph.items.map((it) => [it.skill, it.rating, c.key === "nutrition" ? it.action
+        : (it.drills.length ? it.drills.map((x) => `${x.name} – ${x.purpose}`).join(" · ") : it.note)])));
+  }
+  return out;
+}
+
 // ───────────── the plan in use: versions, coach edits, session logging ─────────────
 async function planPanel(p, host, window) {
   const canEdit = can("coach", "sc_coach", "admin");
@@ -1515,7 +1578,8 @@ async function testingCard(p, host, window) {
       areaTable(cat),
       cat.focus_areas.length ? h("p", {}, h("strong", {}, "Focus areas (below the middle): "), cat.focus_areas.map((f) => f.label).join(", ")) : (cat.band ? h("p", {}, "No area is below the middle.") : null),
       h("div", { class: "row" },
-        h("button", { class: "small", onclick: () => planPanel(p, planHost, w) }, "Show individual plan")),
+        h("button", { class: "small", onclick: () => planPanel(p, planHost, w) }, "Show individual plan"),
+        h("button", { class: "small ghost", onclick: () => categoryPanel(p, planHost, w).catch((x) => planHost.replaceChildren(h("div", { class: "err" }, x.message))) }, "Plans by category")),
       progHost, planHost, h("p", { class: "sub" }, "Confidential: squad coaches, S&C and admin only."));
     if (t.sessions.length >= 2) api(`/players/${p.id}/test-progress`).then((pr) => progHost.replaceChildren(progressView(pr))).catch(() => {});
   }

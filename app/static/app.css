@@ -165,3 +165,6 @@ button.danger{color:var(--bad)}
 #toast.show{visibility:visible}
 .auth-form label>input,.auth-form label>select,.auth-form label>textarea,.auth-form label>.pw{margin-top:6px}
 @media (prefers-reduced-motion:reduce){#toast{transition:none}}
+
+.cat-tabs{flex-wrap:wrap;gap:6px;margin:8px 0 12px}.cat-tabs button.on{background:var(--brand-text);color:var(--card);border-color:var(--brand-text)}.cat-tabs button.off{opacity:.55}
+table.week td{vertical-align:top;min-width:90px}

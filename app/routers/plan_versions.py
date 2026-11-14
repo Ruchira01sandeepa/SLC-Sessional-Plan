@@ -14,8 +14,10 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..deps import audit, current_user
+from ..category_plans import build_category_plans
 from ..individual_plan_excel import build_player_workbook
-from ..models import EventType, IndividualPlanVersion, PlanExerciseLog, Player, User, WorkloadLog
+from ..sc_plan_excel import build_sc_workbook
+from ..models import EventType, IndividualPlanVersion, PdpRubricItem, PlanExerciseLog, Player, User, WorkloadLog
 from ..permissions import authorize_player
 from ..plan_edits import EditError, apply_edits
 from ..plan_progress import plan_progress
@@ -177,6 +179,38 @@ def individual_plan_xlsx(player_id: int, season_id: int | None = None, window: s
     prog = build_progress(_player_windows(p.id, _windows_for(db, p.squad_id, season.id)))
     return Response(build_player_workbook(plan["summary"], _dated(plan), g, _bowling(p), prog), media_type=XLSX,
                     headers={"Content-Disposition": f'attachment; filename="{name}.xlsx"'})
+
+
+# ───────────── separate plans per category (built from the plan in use; the main plan is unchanged) ─────────────
+def _category_plans(db: Session, user: User, p: Player, season_id: int | None, window: str | None, fresh: bool) -> tuple[dict, dict]:
+    plan, _ = _in_use(db, user, p, season_id, window, fresh)
+    pdp: dict[str, list[str]] = {}
+    for r in db.scalars(select(PdpRubricItem).order_by(PdpRubricItem.sort_order, PdpRubricItem.id)):
+        pdp.setdefault(r.group_name, []).append(r.skill_name)
+    return build_category_plans(plan, pdp, p.role.value, _bowling(p)), plan
+
+
+@router.get("/players/{player_id}/category-plans")
+def category_plans(player_id: int, season_id: int | None = None, window: str | None = None, fresh: bool = False,
+                   db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """The player's plan split by development category (Physical = Strength & Conditioning, Nutrition, Batting to Pace, ...)."""
+    p = authorize_player(db, user, db.get(Player, player_id), "testing.read")
+    out, _ = _category_plans(db, user, p, season_id, window, fresh)
+    return out
+
+
+@router.get("/players/{player_id}/sc-plan.xlsx")
+def sc_plan_xlsx(player_id: int, season_id: int | None = None, window: str | None = None, fresh: bool = False,
+                 db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """The Strength & Conditioning (Physical) plan as its own workbook."""
+    p = authorize_player(db, user, db.get(Player, player_id), "testing.read")
+    out, plan = _category_plans(db, user, p, season_id, window, fresh)
+    phys = next(c for c in out["categories"] if c["key"] == "physical")
+    audit(db, user, "sc_plan.exported", "player", p.id)
+    db.commit()
+    season = (plan.get("season") or {}).get("name") or "season"
+    name = re.sub(r"[^A-Za-z0-9]+", "-", f"SC-plan-{p.full_name}-{season}").strip("-") or "SC-plan"
+    return Response(build_sc_workbook(out, phys), media_type=XLSX, headers={"Content-Disposition": f'attachment; filename="{name}.xlsx"'})
 
 
 # ───────────── logging focus sessions against the plan ─────────────
