@@ -363,7 +363,7 @@ function drawTabs() {
   if (S.squad && can("coach", "admin")) tabs.push(["plan", "Seasonal plan"]);
   if (can("admin")) tabs.push(["admin", "Admin"]);
   const nav = $("#tabs"); nav.hidden = false;
-  nav.replaceChildren(...tabs.map(([k, label]) => h("button", { "aria-current": S.tab === k ? "page" : null, onclick: () => { S.pid = null; go(k); } }, label)));
+  nav.replaceChildren(...tabs.map(([k, label]) => h("button", { "aria-current": S.tab === k ? "page" : null, onclick: () => { S.pid = null; S.from = null; go(k); } }, label)));
 }
 
 function go(tab) {
@@ -398,7 +398,7 @@ async function overviewTab() {
   const [players, rows, alerts, events] = await Promise.all([
     api(`/players?squad_id=${S.squad.id}`), api(`/squads/${S.squad.id}/workload/overview`), api(`/squads/${S.squad.id}/alerts`),
     api(`/squads/${S.squad.id}/events?from=${encodeURIComponent(now.toISOString())}&to=${encodeURIComponent(new Date(+now + 14 * 864e5).toISOString())}`)]);
-  const openPlayer = (id) => () => { S.pid = id; go("players"); };
+  const openPlayer = (id) => () => { S.pid = id; S.from = "overview"; go("players"); };
   const n = players.length;
   const count = (k) => players.filter((p) => p.availability === k).length;
   const fit = count("fit"), pctFit = n ? Math.round((fit / n) * 100) : 0;
@@ -500,10 +500,20 @@ function addPlayerForm() {
     err, h("div", { class: "row" }, h("button", { type: "submit" }, "Save"), h("button", { type: "button", class: "ghost", onclick: () => go("players") }, "Cancel"))));
 }
 
+const FROM_LABEL = { players: "Players", tests: "Tests", workload: "Workload", overview: "Overview", fitness: "Fitness" };
+// Close an opened plan and return to the plan buttons above it.
+const planBack = (host) => h("button", { class: "ghost small", onclick: () => {
+  let top = host.previousElementSibling;
+  while (top && !top.querySelector("button")) top = top.previousElementSibling;      // the row with the plan buttons
+  host.replaceChildren();
+  (top || host).scrollIntoView({ behavior: "smooth", block: "center" });
+} }, "← Back");
+
 async function playerView(id) {
   const [p, screenings] = await Promise.all([api("/players/" + id), api(`/players/${id}/screenings`)]);
   const main = $("#main");
-  const back = h("button", { class: "ghost small", onclick: () => { S.pid = null; go("players"); } }, "← Players");
+  const from = S.from && S.from !== "players" ? S.from : "players";
+  const back = h("button", { class: "ghost small", onclick: () => { S.pid = null; S.from = null; go(from); } }, "← " + (FROM_LABEL[from] || "Players"));
   const head = h("div", { class: "card" }, h("div", { class: "bar" }, h("h1", {}, p.full_name), h("span", { class: "chip " + p.availability }, p.availability)),
     h("div", { class: "sub" }, `${ROLE[p.role]} · age ${p.age} · ${p.gender}` + (p.school_or_club ? " · " + p.school_or_club : "")),
     p.availability_note ? h("p", {}, "Note: " + p.availability_note) : null,
@@ -1053,7 +1063,7 @@ async function workloadTab() {
     h("div", { class: "card" }, h("h2", {}, "Open alerts"), alertList(alerts, ack)),
     h("div", { class: "card" }, h("h2", {}, "Squad overview"), h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {},
       ["Player", "Role", "Availability", "7-day load", "Load ratio", "Overs (7 d)", "Bowling days", "Status"].map((c) => h("th", {}, c)))),
-      h("tbody", {}, rows.map((r) => h("tr", { class: "click", onclick: () => { S.pid = r.player_id; go("players"); } },
+      h("tbody", {}, rows.map((r) => h("tr", { class: "click", onclick: () => { S.pid = r.player_id; S.from = S.tab; go("players"); } },
         h("td", {}, r.name), h("td", {}, ROLE[r.role]), h("td", {}, h("span", { class: "chip " + r.availability }, r.availability)),
         h("td", {}, r.acute_load_7d), h("td", {}, r.acwr == null ? "needs 3 weeks" : r.acwr),
         h("td", {}, BOWLS.includes(r.role) ? r.overs_7d : "–"), h("td", {}, BOWLS.includes(r.role) ? r.bowling_days_7d : "–"), h("td", {}, sevChip(r.worst_severity))))))),
@@ -1358,8 +1368,8 @@ async function categoryPanel(p, host, window) {
   d.categories.forEach((c) => tabs.append(h("button", { class: "small ghost" + (c.relevant ? "" : " off"), role: "tab", "data-key": c.key,
     title: c.relevant ? c.title : `${c.title} · for ${c.for.toLowerCase()}`, onclick: () => show(c.key) },
     c.group + (c.priorities ? ` (${c.priorities})` : ""))));
-  host.replaceChildren(h("div", { class: "card inner" }, h("div", { class: "bar" }, h("h2", {}, "Plans by category"), h("span", { class: "chip" }, d.season ? d.season.name : "")),
-    h("p", { class: "sub" }, d.note + " Greyed categories are not part of this player's role."), tabs, body));
+  host.replaceChildren(planBack(host), h("div", { class: "card inner" }, h("div", { class: "bar" }, h("h2", {}, "Plans by category"), h("span", { class: "chip" }, d.season ? d.season.name : "")),
+    h("p", { class: "sub" }, d.note + " Greyed categories are not part of this player's role."), tabs, body), planBack(host));
   show("physical");
 }
 
@@ -1459,9 +1469,10 @@ async function planPanel(p, host, window) {
     const vlist = st.versions && st.versions.length ? h("details", { open: true }, h("summary", {}, "Saved versions"), h("ul", { class: "reviews" },
       st.versions.map((v) => h("li", {}, h("strong", {}, `Version ${v.version}`), ` · ${new Date(v.saved_at).toLocaleString()} · ${v.saved_by || "–"} · from ${v.based_on}`,
         v.edits ? ` · ${v.edits} edit(s)` : "", v.note ? h("div", { class: "sub" }, v.note) : null)))) : null;
-    host.replaceChildren(h("h3", {}, "Individual seasonal plan"), bar(), msg, vlist,
+    host.replaceChildren(planBack(host), h("h3", {}, "Individual seasonal plan"), bar(), msg, vlist,
       st.editing ? h("p", { class: "hint" }, "Edit mode: changes preview instantly and are kept only when you save a version.") : null,
-      ...planView(st.plan, { editing: st.editing, edit: preview, onLog: canEdit && !st.editing ? () => logForm(p, st.plan, () => load(false)) : null }));
+      ...planView(st.plan, { editing: st.editing, edit: preview, onLog: canEdit && !st.editing ? () => logForm(p, st.plan, () => load(false)) : null }),
+      planBack(host));
   }
   try { await load(false); } catch (x) { host.replaceChildren(h("div", { class: "err" }, x.message)); }
 }
@@ -1654,7 +1665,7 @@ async function testingTab() {
   table.replaceChildren(h("h2", {}, `Categories · ${c.window_label}`),
     h("p", { class: "sub" }, `Ranked within the same level only. A band needs ${c.min_cohort}+ players of a level.`),
     h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Player", "Level", "Band", "Score", "Focus areas", "Readiness"].map((x) => h("th", {}, x)))),
-      h("tbody", {}, c.players.map((r) => h("tr", { class: "click", onclick: () => { S.pid = r.player_id; go("players"); } },
+      h("tbody", {}, c.players.map((r) => h("tr", { class: "click", onclick: () => { S.pid = r.player_id; S.from = S.tab; go("players"); } },
         h("td", {}, r.player), h("td", {}, r.level_label || "Not tested"), h("td", {}, r.band ? bandChip(r) : "–"), h("td", {}, r.overall ?? "–"),
         h("td", {}, r.focus_areas.join(", ") || "–"), h("td", {}, readyChip(r.readiness))))))));
   const sp = await api(`/squads/${S.squad.id}/seasons/${S.season.id}/test-progress`);
@@ -1662,7 +1673,7 @@ async function testingTab() {
     prog.replaceChildren(h("h2", {}, "Progress since the first test"),
       h("p", { class: "sub" }, "Each player against their own earlier results."),
       h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Player", "Band movement", "Tests improved", "Below middle before, not now", "Newly below middle"].map((x) => h("th", {}, x)))),
-        h("tbody", {}, sp.players.map((r) => h("tr", { class: "click", onclick: () => { S.pid = r.player_id; go("players"); } },
+        h("tbody", {}, sp.players.map((r) => h("tr", { class: "click", onclick: () => { S.pid = r.player_id; S.from = S.tab; go("players"); } },
           h("td", {}, r.player), h("td", {}, r.band_text ?? "–"), h("td", {}, r.tests_compared ? `${r.tests_improved} of ${r.tests_compared}` : "–"),
           h("td", {}, r.focus_resolved.join(", ") || "–"), h("td", {}, r.focus_new.join(", ") || "–")))))));
     main.append(prog);
