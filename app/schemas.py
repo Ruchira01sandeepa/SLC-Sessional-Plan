@@ -1,3 +1,4 @@
+from typing import Literal
 from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
@@ -148,6 +149,9 @@ class StaffAssign(BaseModel):
 
 
 # ---------- players ----------
+Captaincy = Literal["captain", "vice_captain"]
+
+
 class PlayerCreate(BaseModel):
     squad_id: int
     full_name: str = Field(min_length=1, max_length=200)
@@ -160,6 +164,9 @@ class PlayerCreate(BaseModel):
     other_sports: str | None = None
     category: list[str] | None = None
     school_or_club: str | None = None
+    district: str | None = Field(default=None, max_length=100)
+    captaincy: Captaincy | None = None
+    standby: bool = False
     batting_hand: str | None = None
     bowling_arm: str | None = None
     front_side: str | None = None
@@ -190,6 +197,9 @@ class PlayerUpdate(BaseModel):
     other_sports: str | None = None
     category: list[str] | None = None
     school_or_club: str | None = None
+    district: str | None = Field(default=None, max_length=100)
+    captaincy: Captaincy | None = None
+    standby: bool | None = None
     batting_hand: str | None = None
     bowling_arm: str | None = None
     front_side: str | None = None
@@ -214,6 +224,9 @@ class PlayerOut(ORM):
     other_sports: str | None
     category: list[str] | None
     school_or_club: str | None
+    district: str | None
+    captaincy: str | None
+    standby: bool
     batting_hand: str | None
     bowling_arm: str | None
     front_side: str | None

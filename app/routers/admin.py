@@ -1,6 +1,6 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -8,10 +8,11 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..db import get_db
 from ..deps import audit, require
-from ..models import ApprovalStatus, Squad, SquadStaff, User, UserRole
+from ..models import ApprovalStatus, Gender, Player, PlayerRole, Squad, SquadStaff, User, UserRole
 from ..schemas import (ApproveIn, SignupRequestOut, SquadCreate, SquadOut, StaffAssign, UserCreate, UserOut,
                        UserUpdate)
 from ..security import hash_password
+from ..squad_import import MAX_BYTES as SQUAD_MAX_BYTES, parse_workbook as parse_squad_workbook
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 admin_only = Depends(require("users.manage"))
@@ -107,6 +108,60 @@ def create_squad(body: SquadCreate, db: Session = Depends(get_db), admin: User =
 @router.get("/squads", response_model=list[SquadOut])
 def list_squads(db: Session = Depends(get_db), _: User = Depends(require("squads.manage"))):
     return db.scalars(select(Squad).order_by(Squad.name)).all()
+
+
+@router.post("/squads/import")
+async def import_squad(request: Request, confirm: bool = False, name: str | None = None, province: str | None = None,
+                       age_group: str | None = None, gender: Gender = Gender.male, filename: str | None = None,
+                       db: Session = Depends(get_db), admin: User = Depends(require("squads.manage"))):
+    """Create a NEW squad and its players from a squad sheet (body = the .xlsx file as raw bytes).
+    confirm=false previews (nothing saved). confirm=true creates the squad, only when the sheet has no problems."""
+    try:
+        declared = int(request.headers.get("content-length") or 0)
+    except ValueError:
+        raise HTTPException(400, "Invalid Content-Length header")
+    if declared > SQUAD_MAX_BYTES:
+        raise HTTPException(413, "The file is too large")
+    data = await request.body()
+    if len(data) > SQUAD_MAX_BYTES:
+        raise HTTPException(413, "The file is too large")
+    if age_group is not None:
+        try:
+            age_group = SquadCreate(name="x", province="x", age_group=age_group).age_group
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+    try:
+        parsed = parse_squad_workbook(data, age_group, date.today())
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    out = {"saved": False, "squad": None, "sheet": parsed["sheet"], "title": parsed["title"], "age_group": parsed["age_group"],
+           "suggested": parsed["suggested"], "rows": parsed["rows"], "errors": parsed["errors"], "warnings": parsed["warnings"]}
+    if not confirm:
+        return out
+    if parsed["errors"]:
+        n = len(parsed["errors"])
+        raise HTTPException(422, f"The sheet has {n} problem{'s' if n != 1 else ''}. Fix {'them' if n != 1 else 'it'} in Excel and upload again; nothing was saved.")
+    try:
+        body = SquadCreate(name=(name or parsed["suggested"]["name"] or "").strip(), province=(province or parsed["suggested"]["province"] or "").strip(),
+                           age_group=parsed["age_group"])
+    except ValueError:
+        raise HTTPException(422, "Give the new squad a name and a province")
+    squad = Squad(**body.model_dump())
+    db.add(squad)
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "A squad with this name already exists. Choose another name.")
+    for r in parsed["rows"]:
+        db.add(Player(squad_id=squad.id, squad_no=r["squad_no"], full_name=r["full_name"], date_of_birth=date.fromisoformat(r["date_of_birth"]),
+                      gender=gender, role=PlayerRole(r["role"]), school_or_club=r["school_or_club"], district=r["district"],
+                      batting_hand=r["batting_hand"], bowling_arm=r["bowling_arm"], style=r["style"], captaincy=r["captaincy"],
+                      standby=r["standby"]))
+    audit(db, admin, "squad.imported", "squad", squad.id, f"{len(parsed['rows'])} players from {(filename or 'upload')[:100]}")
+    db.commit()
+    out.update(saved=True, squad=SquadOut.model_validate(squad).model_dump())
+    return out
 
 
 @router.get("/squads/{squad_id}/staff", response_model=list[UserOut])

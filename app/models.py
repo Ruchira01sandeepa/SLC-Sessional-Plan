@@ -15,7 +15,7 @@ from datetime import date, datetime, timezone
 
 from sqlalchemy import (
     JSON, Boolean, Date, DateTime, Enum, Float, ForeignKey, Integer, String, Text,
-    UniqueConstraint, Index,
+    UniqueConstraint, Index, false,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -204,6 +204,9 @@ class Player(Base):
     other_sports: Mapped[str | None] = mapped_column(String(200))
     category: Mapped[list | None] = mapped_column(JSON)                        # ["school","club","national"]
     school_or_club: Mapped[str | None] = mapped_column(String(200))
+    district: Mapped[str | None] = mapped_column(String(100))                  # squad sheet: "District" (e.g. Galle 2)
+    captaincy: Mapped[str | None] = mapped_column(String(20))                  # None / "captain" / "vice_captain"
+    standby: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())   # squad sheet: "Stand By" list
 
     batting_hand: Mapped[str | None] = mapped_column(String(10))               # Fitness Report: "Batting hand"
     bowling_arm: Mapped[str | None] = mapped_column(String(10))                # Fitness Report: "Bowling arm"

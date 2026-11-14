@@ -63,6 +63,8 @@ def get_player(player_id: int, db: Session = Depends(get_db), user: User = Depen
 def update_player(player_id: int, body: PlayerUpdate, db: Session = Depends(get_db), user: User = Depends(current_user)):
     player = authorize_player(db, user, _get(db, player_id), "player.update")
     data = body.model_dump(exclude_unset=True)
+    if data.get("standby", False) is None:          # not nullable: an explicit null means "leave it"
+        del data["standby"]
     if "squad_id" in data and data["squad_id"] != player.squad_id:
         if user.role != UserRole.admin:
             raise HTTPException(403, "Only an administrator can move a player between squads")

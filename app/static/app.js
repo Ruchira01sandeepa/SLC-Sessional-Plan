@@ -481,7 +481,7 @@ async function playersTab() {
   main.replaceChildren(
     h("div", { class: "bar" }, h("h1", {}, S.squad.name), can("coach", "admin") ? h("button", { onclick: () => addPlayerForm() }, "+ Add player") : null),
     players.length ? h("div", { class: "list" }, players.map((p) => h("button", { class: "item", onclick: () => { S.pid = p.id; go("players"); } },
-      h("span", {}, h("strong", {}, (p.squad_no ? "#" + p.squad_no + "  " : "") + p.full_name), h("br"), h("span", { class: "sub" }, ROLE[p.role] + " · age " + p.age)),
+      h("span", {}, h("strong", {}, (p.squad_no ? "#" + p.squad_no + "  " : "") + p.full_name), h("br"), h("span", { class: "sub" }, ROLE[p.role] + " · age " + p.age), p.captaincy ? h("span", { class: "chip" }, CAPT[p.captaincy]) : null, p.standby ? h("span", { class: "chip" }, "Stand-by") : null),
       h("span", { class: "chip " + p.availability }, p.availability)))) : h("div", { class: "empty" }, "No players in this squad yet."));
 }
 
@@ -507,7 +507,7 @@ async function playerView(id) {
   const head = h("div", { class: "card" }, h("div", { class: "bar" }, h("h1", {}, p.full_name), h("span", { class: "chip " + p.availability }, p.availability)),
     h("div", { class: "sub" }, `${ROLE[p.role]} · age ${p.age} · ${p.gender}` + (p.school_or_club ? " · " + p.school_or_club : "")),
     p.availability_note ? h("p", {}, "Note: " + p.availability_note) : null,
-    h("div", { class: "sub" }, [p.batting_hand && "Bats " + p.batting_hand, p.bowling_arm && "Bowls " + p.bowling_arm, p.guardian_name && "Guardian: " + p.guardian_name].filter(Boolean).join(" · ")));
+    h("div", { class: "sub" }, [p.captaincy && CAPT[p.captaincy], p.standby && "Stand-by", p.batting_hand && "Bats " + p.batting_hand, p.style ? "Bowls " + p.style : p.bowling_arm && "Bowls " + p.bowling_arm, p.school_or_club, p.district, p.guardian_name && "Guardian: " + p.guardian_name].filter(Boolean).join(" · ")));
   main.replaceChildren(back, head);
 
   // screening
@@ -853,7 +853,61 @@ function squadsCard(squads, staffLists, users) {
       } }, "Save staff") : null);
   });
   return h("div", { class: "card" }, h("h2", {}, "Squads"), list.length ? h("div", { class: "list" }, list) : h("p", { class: "sub" }, "No squads yet. Create the first one below."),
-    h("h3", {}, "New squad"), create);
+    h("h3", {}, "New squad"), create, squadImport());
+}
+
+const CAPT = { captain: "Captain", vice_captain: "Vice-captain" };
+
+function squadImport() {
+  const file = h("input", { type: "file", accept: ".xlsx", "aria-label": "Squad sheet (.xlsx)" });
+  const age = h("select", { "aria-label": "Age group" }, [["", "Age group: from the sheet title"], ["U15", "Under 15"], ["U17", "Under 17"], ["U19", "Under 19"]].map(([v, t]) => h("option", { value: v }, t)));
+  const result = h("div");
+  const send = async (confirm, extra = {}) => {
+    if (!file.files[0]) { toast("Choose the squad .xlsx file first"); return null; }
+    const q = new URLSearchParams({ confirm, filename: file.files[0].name, ...(age.value ? { age_group: age.value } : {}), ...extra });
+    const res = await fetch(`/admin/squads/import?${q}`, { method: "POST", headers: { Authorization: "Bearer " + S.token, "Content-Type": "application/octet-stream" },
+      body: await file.files[0].arrayBuffer() });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(typeof j.detail === "string" ? j.detail : "Upload failed");
+    return j;
+  };
+  const problems = (title, list, cls) => list.length ? h("div", {}, h("h4", {}, `${title} (${list.length})`), h("div", { class: "scroll" }, h("table", {},
+    h("thead", {}, h("tr", {}, ["Row", "Column", "Problem"].map((c) => h("th", {}, c)))),
+    h("tbody", {}, list.map((e) => h("tr", {}, h("td", {}, e.row), h("td", {}, e.column || "–"), h("td", { class: cls }, e.message))))))) : null;
+  const preview = (j) => {
+    const name = h("input", { required: true, maxLength: 200, value: j.suggested.name || "" });
+    const prov = h("input", { required: true, maxLength: 100, value: j.suggested.province || "" });
+    const err = h("div", { class: "err", role: "alert" });
+    const ok = !j.errors.length && j.rows.length;
+    const create = h("button", { disabled: !ok, onclick: async () => {
+      err.textContent = "";
+      if (!name.value.trim() || !prov.value.trim()) { err.textContent = "Give the squad a name and a province."; return; }
+      create.disabled = true;
+      try {
+        const r = await send(true, { name: name.value.trim(), province: prov.value.trim() });
+        toast(`Squad "${r.squad.name}" created with ${r.rows.length} players`); S.tab = "admin"; await refreshSquads(r.squad.id);
+      } catch (x) { err.textContent = x.message; create.disabled = false; }
+    } }, `Create squad with ${j.rows.length} player${j.rows.length === 1 ? "" : "s"}`);
+    const standby = j.rows.filter((r) => r.standby).length;
+    result.replaceChildren(
+      h("p", {}, h("strong", {}, `${j.rows.length} player${j.rows.length === 1 ? "" : "s"} read`), ` from sheet "${j.sheet}" (${j.age_group})` +
+        (standby ? `, ${standby} on stand-by` : "") + `. ${j.errors.length} problem(s), ${j.warnings.length} warning(s). Nothing is saved yet.`),
+      problems("Problems – fix these in Excel and upload again", j.errors, "down"), problems("Warnings – check these", j.warnings, ""),
+      j.rows.length ? h("div", { class: "scroll" }, h("table", {},
+        h("thead", {}, h("tr", {}, ["No", "Name", "Role", "", "Born", "Age", "School", "District", "Bat", "Bowl"].map((c) => h("th", {}, c)))),
+        h("tbody", {}, j.rows.map((r) => h("tr", {}, h("td", {}, r.squad_no ?? "–"), h("td", {}, r.full_name), h("td", {}, ROLE[r.role]),
+          h("td", {}, [r.captaincy && h("span", { class: "chip" }, CAPT[r.captaincy]), r.standby && h("span", { class: "chip" }, "Stand-by")].filter(Boolean)),
+          h("td", {}, fdate(r.date_of_birth)), h("td", {}, r.age), h("td", {}, r.school_or_club || "–"), h("td", {}, r.district || "–"),
+          h("td", {}, r.batting_hand || "–"), h("td", {}, r.bowl_code || "–")))))) : null,
+      ok ? h("div", { class: "grid" }, field("New squad name", name), field("Province", prov)) : null, err,
+      ok ? create : h("p", { class: "hint warn" }, "The squad can be created once the sheet has no problems."));
+  };
+  return h("div", {}, h("h3", {}, "Import squad from Excel"),
+    h("p", { class: "sub" }, "Upload the squad list (Ranking, Player Name, DOB, School, District, Province, Bat, Bowl, with group headings such as " +
+      "Batting group, Spin group, Pace group and Stand By). Check the preview, then create the squad with all its players."),
+    h("div", { class: "row" }, file, age, h("button", { class: "small", onclick: async () => {
+      try { const j = await send(false); if (j) preview(j); } catch (x) { result.replaceChildren(h("div", { class: "err" }, x.message)); }
+    } }, "Check file")), result);
 }
 
 function seasonsCard() {
