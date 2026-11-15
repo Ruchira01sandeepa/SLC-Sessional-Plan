@@ -360,7 +360,7 @@ function drawTabs() {
   if (S.squad && !can("player")) tabs.unshift(["overview", "Overview"]);
   if (S.squad && !can("player")) tabs.push(["fitness", "Fitness"]);
   if (S.squad && can("coach", "sc_coach", "physio", "admin")) tabs.push(["workload", "Workload"]);
-  if (S.squad && can("coach", "sc_coach", "admin")) tabs.push(["tests", "Tests"]);
+  if (S.squad && can("coach", "sc_coach", "admin")) tabs.push(["physical", "Physical"], ["tests", "Tests"]);
   if (S.squad && can("coach", "admin")) tabs.push(["plan", "Seasonal plan"]);
   if (can("admin")) tabs.push(["admin", "Admin"]);
   const nav = $("#tabs"); nav.hidden = false;
@@ -371,7 +371,7 @@ function go(tab) {
   S.tab = tab; drawTabs();
   Charts.hide();
   document.body.classList.toggle("wide", tab === "overview");
-  const view = { overview: overviewTab, players: S.pid ? () => playerView(S.pid) : playersTab, calendar: calendarTab, fitness: fitnessTab, workload: workloadTab, tests: testingTab, plan: () => planTab(), admin: adminTab }[tab];
+  const view = { overview: overviewTab, players: S.pid ? () => playerView(S.pid) : playersTab, calendar: calendarTab, fitness: fitnessTab, workload: workloadTab, physical: physicalTab, tests: testingTab, plan: () => planTab(), admin: adminTab }[tab];
   Promise.resolve(view()).catch((x) => $("#main").replaceChildren(h("div", { class: "err" }, x.message)));
 }
 
@@ -501,7 +501,7 @@ function addPlayerForm() {
     err, h("div", { class: "row" }, h("button", { type: "submit" }, "Save"), h("button", { type: "button", class: "ghost", onclick: () => go("players") }, "Cancel"))));
 }
 
-const FROM_LABEL = { players: "Players", tests: "Tests", workload: "Workload", overview: "Overview", fitness: "Fitness" };
+const FROM_LABEL = { players: "Players", physical: "Physical", tests: "Tests", workload: "Workload", overview: "Overview", fitness: "Fitness" };
 // Close an opened plan and return to the plan buttons above it.
 const planBack = (host) => h("button", { class: "ghost small", onclick: () => {
   let top = host.previousElementSibling;
@@ -1665,6 +1665,99 @@ async function testingCard(p, host, window) {
       progHost, planHost, h("p", { class: "sub" }, "Confidential: squad coaches, S&C and admin only."));
     if (t.sessions.length >= 2) api(`/players/${p.id}/test-progress`).then((pr) => progHost.replaceChildren(progressView(pr))).catch(() => {});
   }
+}
+
+// ───────────── Physical (S&C) page: dashboard, groups, re-test and progress, growth ─────────────
+const MATURITY = { unknown: "Not known", pre_phv: "Before the growth spurt", circa_phv: "In the growth spurt", post_phv: "After the growth spurt" };
+const rankCell = (v) => v == null ? h("td", { class: "heat na" }, "–")
+  : h("td", { class: "heat " + (v < 50 ? "lo" : v >= 70 ? "hi" : "mid"), title: v < 50 ? "Priority" : v >= 70 ? "Strength" : "Solid" }, Charts.num(v, 0));
+const openP = (id) => () => { S.pid = id; S.from = "physical"; go("players"); };
+
+async function physicalTab() {
+  const main = $("#main");
+  if (!S.season) return main.replaceChildren(h("h1", {}, "Physical"), h("div", { class: "card" }, "This squad has no season yet. Create one in Admin → Seasons."));
+  const sec = S.physSec || "dashboard";
+  const d = await api(`/squads/${S.squad.id}/seasons/${S.season.id}/physical${S.physWin ? "?window=" + S.physWin : ""}`);
+  const tabs = h("div", { class: "row cat-tabs", role: "tablist" }, [["dashboard", "Dashboard"], ["groups", "S&C groups"], ["progress", "Re-test & progress"], ["growth", "Growth & body"]]
+    .map(([k, t]) => h("button", { class: "small ghost" + (k === sec ? " on" : ""), role: "tab", "aria-selected": k === sec, onclick: () => { S.physSec = k; physicalTab(); } }, t)));
+  const winPick = d.windows_with_results.length > 1 ? h("select", { "aria-label": "Test window", onchange: (e) => { S.physWin = e.target.value; physicalTab(); } },
+    d.windows_with_results.map((w) => h("option", { value: w, selected: w === d.window }, WINDOWS.find((x) => x[0] === w)[1]))) : null;
+  const body = { dashboard: physDashboard, groups: physGroups, progress: physProgress, growth: physGrowth }[sec](d);
+  main.replaceChildren(h("div", { class: "bar" }, h("h1", {}, "Physical – Strength & Conditioning"), h("div", { class: "row" }, winPick, seasonPicker(() => physicalTab()))),
+    h("p", { class: "sub" }, `${S.squad.name} · ${d.season.name} · test window: ${d.window_label}` + (d.phase_label ? ` · current phase: ${d.phase_label}` : "")),
+    tabs, ...[].concat(body), h("details", { class: "card" }, h("summary", {}, "Notes"), d.notes.map((n) => h("p", { class: "sub" }, n))));
+}
+
+function physDashboard(d) {
+  const x = d.dashboard;
+  const tiles = h("div", { class: "row tiles" },
+    [["Tested", `${x.tested} of ${x.squad_size}`], ["Priority areas (below 50)", x.summary.reduce((a, s) => a + s.priority, 0)],
+     ["Strengths (70+)", x.summary.reduce((a, s) => a + s.strength, 0)], ["Pace bowlers to watch", x.pace.filter((p) => p.watch.length).length]]
+      .map(([k, v]) => h("div", { class: "card tile" }, h("div", { class: "sub" }, k), h("div", { class: "big" }, String(v)))));
+  return [tiles,
+    x.untested.length ? h("p", { class: "hint warn" }, "Not tested in this window: " + x.untested.join(", ")) : null,
+    h("div", { class: "card" }, h("h2", {}, "Player × area (rank in level, 100 = best)"),
+      h("p", { class: "sub" }, "Red = priority (below 50) · plain = solid · green = strength (70+). Click a player for their plans."),
+      h("div", { class: "scroll" }, h("table", { class: "heatmap" }, h("thead", {}, h("tr", {}, ["Player", "Role", "Band", ...x.areas.map((a) => a.label), "Priorities"].map((c) => h("th", {}, c)))),
+        h("tbody", {}, x.rows.map((r) => h("tr", { class: "click", onclick: openP(r.player_id) }, h("td", {}, r.name), h("td", {}, ROLE[r.role]),
+          h("td", {}, r.band ? `${r.band} · ${r.band_label}` : "–"), ...x.areas.map((a) => rankCell(r.areas[a.area])), h("td", {}, r.priorities.join(", ") || "–"))))))),
+    h("div", { class: "card" }, h("h2", {}, "Squad by area"), catTable(["Area", "Tested", "Priority", "Strength", "Weakest area for"],
+      x.summary.map((s) => [s.label, s.tested, s.priority, s.strength, `${s.weakest_first} player(s)`]))),
+    x.pace.length ? h("div", { class: "card" }, h("h2", {}, "Fast-bowler fitness"),
+      h("p", { class: "sub" }, "Endurance and core protect a bowler late in a spell. Below 50 = watch (see Tests → Workload from testing for suggested limits)."),
+      h("div", { class: "scroll" }, h("table", { class: "heatmap" }, h("thead", {}, h("tr", {}, ["Player", "Endurance", "Core", "Leg power", "Speed", "Watch"].map((c) => h("th", {}, c)))),
+        h("tbody", {}, x.pace.map((p) => h("tr", {}, h("td", {}, p.name), rankCell(p.endurance), rankCell(p.core), rankCell(p.power), rankCell(p.speed),
+          h("td", {}, p.watch.length ? h("span", { class: "chip warn" }, p.watch.join(", ")) : h("span", { class: "chip ok" }, "OK")))))))) : null];
+}
+
+function physGroups(d) {
+  if (!d.groups.length) return h("div", { class: "card" }, "No test results in this window yet, so there are no groups.");
+  return [h("p", { class: "sub" }, `${d.groups.length} groups for ${d.groups.reduce((a, g) => a + g.players.length, 0)} players, by each player's weakest area. Sessions are for the current phase (${d.phase_label || "–"}).`),
+    ...d.groups.map((g) => {
+      const s = g.session, rows = [];
+      if (s) s.parts.forEach((pt) => pt.items.forEach((it, i) => rows.push([i === 0 ? `${pt.part}${pt.minutes ? ` (${pt.minutes} min)` : ""}` : "", it.name, it.area_label || "", it.set || "", it.rep || it.time || "", it.rest || ""])));
+      return h("div", { class: "card" }, h("div", { class: "bar" }, h("h2", {}, `${g.label} (${g.players.length})`), s ? h("span", { class: "chip" }, `${s.phase_label} · about ${s.minutes} min`) : null),
+        h("p", {}, g.players.map((p, i) => [i ? ", " : "", h("a", { href: "#", onclick: (e) => { e.preventDefault(); openP(p.player_id)(); } }, p.name),
+          h("span", { class: "sub" }, p.rank != null ? ` (${Charts.num(p.rank, 0)})` : "")])),
+        s ? [s.second_focus ? h("p", { class: "sub" }, `Also covers: ${s.second_focus}, the group's next most common need.`) : null,
+          catTable(["Part", "Exercise", "Area", "Sets", "Reps / time", "Rest"], rows), h("p", { class: "sub" }, s.note)] : null);
+    })];
+}
+
+function physProgress(d) {
+  const r = d.retest, p = d.progress;
+  const plan = h("div", { class: "card" }, h("h2", {}, "Next test"), h("p", {}, r.text),
+    r.next_window && !(r.scheduled || []).length && can("coach", "sc_coach", "admin") ? h("button", { class: "small", onclick: async () => {
+      try {
+        await api(`/squads/${S.squad.id}/events`, { method: "POST", body: { event_type: "fitness_test", title: `${r.label} physical testing`, start_at: `${r.suggested_date}T08:00:00+05:30` } });
+        toast("Test added to the calendar"); physicalTab();
+      } catch (x) { toast(x.message); }
+    } }, `Add ${r.label.toLowerCase()} test on ${fdate(r.suggested_date)} to the calendar`) : null);
+  const cls = { improved: "up", declined: "down", same: "flat", single: "" };
+  const table = h("div", { class: "card" }, h("h2", {}, p.any_compared ? "Change since the first test" : "Results so far"),
+    h("p", { class: "sub" }, p.any_compared ? "Green = better, red = worse, grey = no clear change. Each player against their own earlier result."
+      : "Only one test window so far: these are the first results. After the next test this shows each player's change."),
+    h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Player", ...p.tests.map((t) => `${t.label} (${t.unit})`), "Improved", "Band"].map((c) => h("th", {}, c)))),
+      h("tbody", {}, p.rows.map((x) => h("tr", { class: "click", onclick: openP(x.player_id) }, h("td", {}, x.name),
+        ...p.tests.map((t) => h("td", { class: cls[x.cells[t.key].state] }, x.cells[t.key].text)),
+        h("td", {}, x.compared ? `${x.improved} of ${x.compared}` : "–"), h("td", {}, x.band || "–")))))));
+  return [plan, table];
+}
+
+function physGrowth(d) {
+  const canSet = can("coach", "sc_coach", "admin");
+  const noData = d.growth.every((g) => !g.measures.length);
+  return h("div", { class: "card" }, h("h2", {}, "Growth & body data"),
+    noData ? h("p", { class: "hint warn" }, "No height or mass has been recorded yet. Fill Height (cm) and Body weight (kg) in the test template at every test; the growth rate appears after two heights at least 3 months apart.") : null,
+    h("p", { class: "sub" }, "Growth stage changes the plans: in the growth spurt, jump and sprint volume is kept low and fast bowlers bowl one over fewer per day."),
+    h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Player", "Height (cm)", "Mass (kg)", "BMI", "Growth (cm/yr)", "Stage", "Set stage"].map((c) => h("th", {}, c)))),
+      h("tbody", {}, d.growth.map((g) => h("tr", {}, h("td", {}, h("a", { href: "#", onclick: (e) => { e.preventDefault(); openP(g.player_id)(); } }, g.name)),
+        h("td", {}, g.height_cm ?? "–"), h("td", {}, g.weight_kg ?? "–"), h("td", {}, g.bmi ?? "–"),
+        h("td", {}, g.velocity_cm_yr != null ? h("span", { class: g.in_spurt ? "chip warn" : "" }, String(g.velocity_cm_yr)) : (g.measures.length === 1 ? "needs a 2nd height" : "–")),
+        h("td", {}, h("span", { class: g.in_spurt ? "chip warn" : "chip" }, g.stage_label), g.stage_source !== "not known" ? h("span", { class: "sub" }, ` (${g.stage_source})`) : null),
+        h("td", {}, canSet ? h("select", { "aria-label": "Growth stage for " + g.name, onchange: async (e) => {
+          try { await api(`/players/${g.player_id}`, { method: "PATCH", body: { maturity_status: e.target.value } }); toast("Growth stage saved"); physicalTab(); } catch (x) { toast(x.message); }
+        } }, Object.entries(MATURITY).map(([k, t]) => h("option", { value: k, selected: k === g.maturity_status }, t))) : MATURITY[g.maturity_status])))))));
 }
 
 // ───────────── workload from the testing record ─────────────

@@ -3,6 +3,7 @@
 Admin / S&C download a template pre-filled with the squad's players, fill it, and upload it. The upload is previewed first
 (nothing is saved) and then confirmed. Results are confidential: players do not see them."""
 import re
+from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import select
@@ -439,3 +440,58 @@ def log_test_workload(squad_id: int, season_id: int, window: str, db: Session = 
     audit(db, user, "test_workload.logged", "season", season_id, ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
     db.commit()
     return {"window": window, **{k: counts.get(k, 0) for k in ("logged", "updated", "coach_logged", "skipped")}}
+
+
+# ───────────── the squad's Physical (S&C) page: dashboard, S&C groups, re-test and progress, growth ─────────────
+from .. import physical_hub as ph  # noqa: E402
+from ..exercises import groups_for  # noqa: E402
+from ..models import CalendarEvent  # noqa: E402
+from .plans import _local_date, _phases_for, _utc_naive  # noqa: E402
+
+
+@router.get("/squads/{squad_id}/seasons/{season_id}/physical")
+def physical_page(squad_id: int, season_id: int, window: str | None = None, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    authorize_squad(db, user, squad_id, "testing.read")
+    season = _season(db, squad_id, season_id)
+    wins = _windows_for(db, squad_id, season_id)
+    window = _window(window) if window else next((w for w in reversed(WINDOWS) if w in wins), "baseline")
+    cats = wins[window][0] if window in wins else {}
+    players = list(db.scalars(select(Player).where(Player.squad_id == squad_id, Player.is_active).order_by(Player.squad_no, Player.full_name)))
+    plist = [{"id": p.id, "name": p.full_name, "role": p.role.value, "squad_no": p.squad_no, "maturity_status": p.maturity_status.value,
+              "style_pace": p.role == PlayerRole.all_rounder and "fast" in (_bowling(p) or set())} for p in players]
+    dash = ph.heatmap(plist, cats)
+
+    phases, phases_source = _phases_for(season)
+    today = today_lk()
+    phase = ph.current_phase(phases, today)
+    by_id = {p.id: p for p in players}
+    groups = ph.make_groups(dash["rows"])
+    for g in groups:
+        rg: list[str] = []
+        for m in g["players"]:
+            for x in groups_for(m["role"], _bowling(by_id[m["player_id"]])):
+                if x not in rg:
+                    rg.append(x)
+        g["session"] = ph.group_session(g, phase, rg) if phase else None
+
+    tests = [_local_date(e.start_at) for e in db.scalars(select(CalendarEvent).where(
+        CalendarEvent.squad_id == squad_id, CalendarEvent.event_type == EventType.fitness_test,
+        CalendarEvent.start_at >= _utc_naive(season.start_date - timedelta(days=30), False), CalendarEvent.start_at < _utc_naive(season.end_date + timedelta(days=30), True)))]
+    retest = ph.retest_plan({"start_date": season.start_date, "end_date": season.end_date}, phases, list(wins), tests, today)
+    per = {p.id: build_progress(_player_windows(p.id, wins)) for p in players if any(p.id in s for _, s in wins.values())}
+    progress = ph.progress_rows(per, {p.id: p.full_name for p in players})
+
+    measures: dict[int, list[dict]] = {p.id: [] for p in players}
+    for s in db.scalars(select(TestSession).where(TestSession.player_id.in_([p.id for p in players] or [-1]))):
+        if s.test_date and (s.height_cm or s.weight_kg):
+            measures[s.player_id].append({"date": s.test_date, "height_cm": s.height_cm, "weight_kg": s.weight_kg})
+    return {"season": {"id": season.id, "name": season.name}, "window": window, "window_label": WINDOW_LABEL[window],
+            "windows_with_results": list(wins), "phase": phase, "phase_label": ph.PHASE_LABEL.get(phase) if phase else None,
+            "phases_source": phases_source, "dashboard": dash, "groups": groups, "retest": retest, "progress": progress,
+            "growth": ph.growth_rows(plist, measures),
+            "notes": ["Ranks compare each player with the same-level group in this window (100 = best, below 50 = priority, 70+ = strength). "
+                      "They are not pass or fail marks.",
+                      "S&C groups are formed from each player's weakest area; a player can be moved by the coach. Group doses are a conservative "
+                      "range; each player's own S&C plan has their personal dose.",
+                      "Growth rate needs two heights at least 3 months apart. Record height and mass at every test.",
+                      "Every exercise and number is a proposal for the coach."]}

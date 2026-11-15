@@ -168,3 +168,6 @@ button.danger{color:var(--bad)}
 
 .cat-tabs{flex-wrap:wrap;gap:6px;margin:8px 0 12px}.cat-tabs button.on{background:var(--brand-text);color:var(--card);border-color:var(--brand-text)}.cat-tabs button.off{opacity:.55}
 table.week td{vertical-align:top;min-width:90px}
+.heatmap td.heat{text-align:center;font-weight:600}.heatmap td.heat.lo{background:color-mix(in srgb,var(--bad) 18%,transparent)}
+.heatmap td.heat.hi{background:color-mix(in srgb,var(--good) 18%,transparent)}.heatmap td.heat.na{color:var(--mute)}
+.tiles{gap:12px;flex-wrap:wrap}.tiles .tile{flex:1 1 160px;margin:0}.tiles .big{font-size:1.6rem;font-weight:700}
