@@ -122,3 +122,22 @@ def test_tournament_is_one_microcycle():
                              phases=[{"phase_type": "in_season", "start_date": date(2026, 11, 26), "end_date": date(2026, 12, 5)}],
                              squad_areas=SA, role_groups=RG, today=date(2026, 11, 15))
     assert {w["microcycle"] for w in p["weeks"]} == {"Tournament microcycle (10 days)"}
+
+
+def test_player_plans_and_download_all(client, world, db):
+    import zipfile
+    ids = add_players(db, world)
+    sid = make_season(client, world)
+    upload(client, world, fill(get_template(client, world, sid).content, {pid: good_row(i) for i, pid in enumerate(ids)}), sid, confirm=True)
+    base = f"/squads/{world['squad_a']}/seasons/{sid}"
+    r = client.get(f"{base}/sc-season-plan/players/{ids[0]}.xlsx", headers=H(world, "sc_a"))
+    assert r.status_code == 200 and "Test-Player-0" in r.headers["content-disposition"]
+    ws = openpyxl.load_workbook(io.BytesIO(r.content))["Macrocycle"]
+    assert "Test Player 0" in ws["A1"].value and "own" in ws["A2"].value
+    assert client.get(f"{base}/sc-season-plan/players/{world['cara']}.xlsx", headers=H(world, "admin")).status_code == 404   # other squad
+    z = client.get(f"{base}/sc-season-plans.zip", headers=H(world, "coach_a"))
+    assert z.status_code == 200 and z.headers["content-type"] == "application/zip"
+    names = zipfile.ZipFile(io.BytesIO(z.content)).namelist()
+    active = client.get(f"/players?squad_id={world['squad_a']}", headers=H(world, "admin")).json()
+    assert names[0].startswith("00-Squad") and len(names) == 1 + len(active)
+    assert client.get(f"{base}/sc-season-plans.zip", headers=H(world, "coach_b")).status_code in (403, 404)

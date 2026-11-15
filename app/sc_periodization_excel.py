@@ -30,7 +30,9 @@ def build_sc_season_workbook(squad: str, p: dict) -> bytes:
     ws.title = "Macrocycle"
     wk = p["weeks"]
     _s(ws, 1, 1, f"S&C SEASONAL PLAN (PERIODIZED) - {squad} - {p['season']['name']}", bold=True)
-    _s(ws, 2, 1, p["source"])
+    _s(ws, 2, 1, p["source"] + ". Targets from " + p.get("based_on", "the squad's tests") + ".")
+    if p.get("player") and p["player"].get("ranks"):
+        _s(ws, 3, 1, "Test ranks (100 = best in level): " + ", ".join(f"{k} {v:g}" for k, v in p["player"]["ranks"].items() if v is not None))
     rows = [("Week", lambda w: w["week"]), ("Starts", lambda w: w["start"].strftime("%d %b")),
             ("Period", lambda w: w["period"]), ("Mesocycle", lambda w: f"{w['mesocycle']} {w['meso_label']}"),
             ("Microcycle", lambda w: w["microcycle"]), ("Volume (%)", lambda w: w["volume"]),

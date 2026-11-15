@@ -1441,7 +1441,8 @@ function physicalOnly(plan) {
 
 function scView(c, p, window, main) {
   const out = [h("div", { class: "bar" }, h("h3", {}, "Physical – Strength & Conditioning plan"),
-    h("button", { class: "small", onclick: () => downloadFile(`/players/${p.id}/sc-plan.xlsx?window=${window}`, "SC-plan.xlsx").catch((x) => toast(x.message)) }, "Download S&C plan (Excel)")),
+    h("div", { class: "row" }, h("button", { class: "small", onclick: () => downloadFile(`/players/${p.id}/sc-plan.xlsx?window=${window}`, "SC-plan.xlsx").catch((x) => toast(x.message)) }, "Download S&C plan (Excel)"),
+      S.season ? h("button", { class: "small ghost", onclick: () => downloadFile(`/squads/${p.squad_id}/seasons/${S.season.id}/sc-season-plan/players/${p.id}.xlsx`, "SC-season-plan.xlsx").catch((x) => toast(x.message)) }, "Periodized season plan (Excel)") : null)),
     h("p", { class: "sub" }, "The seasonal S&C plan in the same layout as the individual plan (its physical part), followed by the focus sessions and the week-by-week plan."),
     ...planView(physicalOnly(main)),
     h("h3", {}, "S&C sessions"),
@@ -1760,6 +1761,16 @@ function physTargets(d) {
     none.length ? h("p", { class: "sub" }, "No priority area (nothing below the middle): " + none.join(", ") + ".") : null);
 }
 
+function playerPlanList() {
+  const host = h("div", {}, h("p", { class: "sub" }, "Loading players…"));
+  api(`/players?squad_id=${S.squad.id}`).then((ps) => host.replaceChildren(...ps.filter((p) => p.is_active)
+    .sort((a, b) => (a.squad_no ?? 999) - (b.squad_no ?? 999) || a.full_name.localeCompare(b.full_name))
+    .map((p) => h("div", { class: "item" }, h("span", {}, (p.squad_no ? `#${p.squad_no}  ` : "") + p.full_name, h("span", { class: "sub" }, " · " + ROLE[p.role])),
+      h("button", { class: "small ghost", onclick: () => downloadFile(`/squads/${S.squad.id}/seasons/${S.season.id}/sc-season-plan/players/${p.id}.xlsx`, "SC-season-plan.xlsx").catch((x) => toast(x.message)) }, "Download (Excel)")))))
+    .catch((x) => host.replaceChildren(h("div", { class: "err" }, x.message)));
+  return host;
+}
+
 const MESO_CLS = { accumulation: "c-s3", transmutation: "c-s1", realization: "c-s2", competition: "c-good", transition: "c-muted" };
 
 function physSeason() {
@@ -1774,11 +1785,17 @@ function physSeason() {
       data: wk.map((w) => ({ label: `W${w.week}`, value: w.volume, cls: MESO_CLS[w.meso_type], tip: [`Week ${w.week} · ${fdate(String(w.start).slice(0, 10))}`, `${w.meso_label} · ${w.microcycle}`, `Volume ${w.volume}% · ${w.sessions} session(s)`, w.targets.length ? "Targets: " + w.targets.join(", ") : ""] })) });
     host.replaceChildren(
       h("div", { class: "card" }, h("div", { class: "bar" }, h("h2", {}, "Periodized S&C season plan"),
-          h("button", { class: "small", onclick: () => downloadFile(`/squads/${S.squad.id}/seasons/${S.season.id}/sc-season-plan.xlsx`, "SC-season-plan.xlsx").catch((x) => toast(x.message)) }, "Download (Excel)")),
+          h("div", { class: "row" },
+            h("button", { class: "small ghost", onclick: () => downloadFile(`/squads/${S.squad.id}/seasons/${S.season.id}/sc-season-plan.xlsx`, "SC-season-plan.xlsx").catch((x) => toast(x.message)) }, "Squad plan (Excel)"),
+            h("button", { class: "small", onclick: (e) => { const b = e.target; b.disabled = true; b.textContent = "Preparing all plans…";
+              downloadFile(`/squads/${S.squad.id}/seasons/${S.season.id}/sc-season-plans.zip`, "SC-season-plans.zip").catch((x) => toast(x.message))
+                .finally(() => { b.disabled = false; b.textContent = "Download all plans (squad + every player)"; }); } }, "Download all plans (squad + every player)"))),
         h("p", { class: "sub" }, `${p.source}. Targets from ${p.based_on}; order of need: ${p.target_order.join(" → ")}.`),
         h("div", { class: "row legend" }, Object.entries({ accumulation: "Accumulation", transmutation: "Transmutation", realization: "Realization", competition: "Competition", transition: "Transition" })
           .map(([k, t]) => h("span", { class: "chip m-" + k }, t))),
         chart, grid),
+      h("details", { class: "card" }, h("summary", {}, "Player-by-player plans (each built on the player's own test ranks)"),
+        h("div", { class: "list" }, playerPlanList())),
       ...p.mesocycles.map((m) => h("details", { class: "card", open: m.number === 1 },
         h("summary", {}, h("strong", {}, m.label), ` · ${fdate(String(m.start).slice(0, 10))} – ${fdate(String(m.end).slice(0, 10))} · ${m.weeks} week${m.weeks === 1 ? "" : "s"}` +
           (m.targets.length ? " · targets: " + m.targets.map((t) => t.label).join(" + ") : "")),

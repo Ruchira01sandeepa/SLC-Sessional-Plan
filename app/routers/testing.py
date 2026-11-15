@@ -661,7 +661,8 @@ from .. import sc_periodization as scp  # noqa: E402
 from ..sc_periodization_excel import build_sc_season_workbook  # noqa: E402
 
 
-def _sc_season(db: Session, user: User, squad_id: int, season_id: int, window: str | None) -> tuple[dict, Squad]:
+def _sc_season(db: Session, user: User, squad_id: int, season_id: int, window: str | None, player: Player | None = None) -> tuple[dict, Squad]:
+    """The squad plan, or with `player` the same periodization built on that player's own test ranks and role."""
     authorize_squad(db, user, squad_id, "testing.read")
     season = _season(db, squad_id, season_id)
     squad = db.get(Squad, squad_id)
@@ -675,6 +676,11 @@ def _sc_season(db: Session, user: User, squad_id: int, season_id: int, window: s
             if a["percentile"] is not None:
                 areas.setdefault(a["area"], []).append(a["percentile"])
     squad_areas = [{"area": a, "priority": sum(1 for v in vs if v < 50), "median": sorted(vs)[len(vs) // 2]} for a, vs in areas.items()]
+    if player is not None:
+        own = cats.get(player.id)
+        squad_areas = ([{"area": a["area"], "priority": 1 if a["percentile"] < 50 else 0, "median": a["percentile"]}
+                        for a in own["areas"] if a["percentile"] is not None] if own else squad_areas)
+        players = [player]
     role_groups: list[str] = []
     for p in players:
         for g in groups_for(p.role.value, _bowling(p)):
@@ -692,6 +698,12 @@ def _sc_season(db: Session, user: User, squad_id: int, season_id: int, window: s
     plan["window"] = window
     plan["based_on"] = (f"{len(cats)} tested players ({WINDOW_LABEL[window]})" if cats else
                         "no test results yet: targets use a default order until the squad is tested")
+    if player is not None:
+        own = cats.get(player.id)
+        plan["player"] = {"id": player.id, "name": player.full_name, "role": player.role.value, "squad_no": player.squad_no,
+                          "ranks": {a["label"]: a["percentile"] for a in own["areas"]} if own else {}}
+        plan["based_on"] = (f"{player.full_name}'s own {WINDOW_LABEL[window]} test ranks (weakest areas first)" if own else
+                            f"{player.full_name} has no test results in this window: the squad's needs are used until they are tested")
     return plan, squad
 
 
@@ -708,3 +720,49 @@ def sc_season_plan_xlsx(squad_id: int, season_id: int, window: str | None = None
     db.commit()
     name = re.sub(r"[^A-Za-z0-9]+", "-", f"SC-season-plan-{squad.name}-{plan['season']['name']}").strip("-") or "SC-season-plan"
     return Response(build_sc_season_workbook(squad.name, plan), media_type=XLSX, headers={"Content-Disposition": f'attachment; filename="{name}.xlsx"'})
+
+
+
+def _player_in_squad(db: Session, squad_id: int, player_id: int) -> Player:
+    p = db.get(Player, player_id)
+    if p is None or p.squad_id != squad_id:
+        raise HTTPException(404, "Player not found in this squad")
+    return p
+
+
+def _file_name(*parts: str) -> str:
+    return re.sub(r"[^A-Za-z0-9]+", "-", "-".join(parts)).strip("-") or "plan"
+
+
+@router.get("/squads/{squad_id}/seasons/{season_id}/sc-season-plan/players/{player_id}.xlsx")
+def sc_season_plan_player_xlsx(squad_id: int, season_id: int, player_id: int, window: str | None = None,
+                               db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """One player's periodized S&C seasonal plan (their own targets, their role's exercises)."""
+    authorize_squad(db, user, squad_id, "testing.read")
+    p = _player_in_squad(db, squad_id, player_id)
+    plan, squad = _sc_season(db, user, squad_id, season_id, window, p)
+    audit(db, user, "sc_season_plan.exported", "player", p.id)
+    db.commit()
+    name = _file_name("SC-season-plan", p.full_name, plan["season"]["name"])
+    return Response(build_sc_season_workbook(f"{p.full_name} ({squad.name})", plan), media_type=XLSX,
+                    headers={"Content-Disposition": f'attachment; filename="{name}.xlsx"'})
+
+
+@router.get("/squads/{squad_id}/seasons/{season_id}/sc-season-plans.zip")
+def sc_season_plans_zip(squad_id: int, season_id: int, window: str | None = None, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Every plan in one download: the squad plan plus one workbook per active player."""
+    import io
+    import zipfile
+    plan, squad = _sc_season(db, user, squad_id, season_id, window)
+    buf = io.BytesIO()
+    players = list(db.scalars(select(Player).where(Player.squad_id == squad_id, Player.is_active).order_by(Player.squad_no, Player.full_name)))
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr(f"00-{_file_name('Squad', squad.name, plan['season']['name'])}.xlsx", build_sc_season_workbook(squad.name, plan))
+        for i, p in enumerate(players, 1):
+            pp, _ = _sc_season(db, user, squad_id, season_id, window, p)
+            num = f"{p.squad_no:02d}" if p.squad_no is not None else f"x{i:02d}"
+            z.writestr(f"{num}-{_file_name(p.full_name)}.xlsx", build_sc_season_workbook(f"{p.full_name} ({squad.name})", pp))
+    audit(db, user, "sc_season_plans.exported", "season", season_id, f"{len(players)} players")
+    db.commit()
+    name = _file_name("SC-season-plans", squad.name, plan["season"]["name"])
+    return Response(buf.getvalue(), media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{name}.zip"'})
