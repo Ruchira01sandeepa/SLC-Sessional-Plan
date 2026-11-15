@@ -1676,16 +1676,88 @@ const openP = (id) => () => { S.pid = id; S.from = "physical"; go("players"); };
 async function physicalTab() {
   const main = $("#main");
   if (!S.season) return main.replaceChildren(h("h1", {}, "Physical"), h("div", { class: "card" }, "This squad has no season yet. Create one in Admin → Seasons."));
-  const sec = S.physSec || "dashboard";
+  const sec = S.physSec || "today";
   const d = await api(`/squads/${S.squad.id}/seasons/${S.season.id}/physical${S.physWin ? "?window=" + S.physWin : ""}`);
-  const tabs = h("div", { class: "row cat-tabs", role: "tablist" }, [["dashboard", "Dashboard"], ["groups", "S&C groups"], ["progress", "Re-test & progress"], ["growth", "Growth & body"]]
+  const tabs = h("div", { class: "row cat-tabs", role: "tablist" }, [["today", "Today"], ["dashboard", "Dashboard"], ["groups", "S&C groups"], ["targets", "Targets"], ["progress", "Re-test & progress"], ["growth", "Growth & body"]]
     .map(([k, t]) => h("button", { class: "small ghost" + (k === sec ? " on" : ""), role: "tab", "aria-selected": k === sec, onclick: () => { S.physSec = k; physicalTab(); } }, t)));
   const winPick = d.windows_with_results.length > 1 ? h("select", { "aria-label": "Test window", onchange: (e) => { S.physWin = e.target.value; physicalTab(); } },
     d.windows_with_results.map((w) => h("option", { value: w, selected: w === d.window }, WINDOWS.find((x) => x[0] === w)[1]))) : null;
-  const body = { dashboard: physDashboard, groups: physGroups, progress: physProgress, growth: physGrowth }[sec](d);
-  main.replaceChildren(h("div", { class: "bar" }, h("h1", {}, "Physical – Strength & Conditioning"), h("div", { class: "row" }, winPick, seasonPicker(() => physicalTab()))),
+  const body = { today: physToday, dashboard: physDashboard, groups: physGroups, targets: physTargets, progress: physProgress, growth: physGrowth }[sec](d);
+  const report = h("button", { class: "small ghost", onclick: () => downloadFile(`/squads/${S.squad.id}/seasons/${S.season.id}/physical-report.xlsx?window=${d.window}`, "physical-report.xlsx").catch((x) => toast(x.message)) }, "Download report (Excel)");
+  main.replaceChildren(h("div", { class: "bar" }, h("h1", {}, "Physical – Strength & Conditioning"), h("div", { class: "row" }, report, winPick, seasonPicker(() => physicalTab()))),
     h("p", { class: "sub" }, `${S.squad.name} · ${d.season.name} · test window: ${d.window_label}` + (d.phase_label ? ` · current phase: ${d.phase_label}` : "")),
     tabs, ...[].concat(body), h("details", { class: "card" }, h("summary", {}, "Notes"), d.notes.map((n) => h("p", { class: "sub" }, n))));
+}
+
+const canCoach = () => can("coach", "sc_coach", "admin");
+
+function physToday(d) {
+  const t = d.today;
+  const order = ["full", "upper", "reduced", "light", "recovery", "none"];
+  const tiles = h("div", { class: "row tiles" }, order.filter((k) => t.counts[k]).map((k) =>
+    h("div", { class: "card tile" }, h("div", { class: "sub" }, t.labels[k]), h("div", { class: "big act " + k }, String(t.counts[k])))));
+  return [h("p", { class: "sub" }, `S&C decision for ${fdate(String(t.date).slice(0, 10))}` + (t.match_today ? " · match today" : t.match_tomorrow ? " · match tomorrow" : "") +
+      ". From availability, open workload alerts, the latest wellness check, matches and recent bowling. The strictest rule decides."),
+    tiles,
+    t.no_wellness.length ? h("p", { class: "hint warn" }, `No wellness check today or yesterday for ${t.no_wellness.length} player(s). Log wellness (player page → Wellness) so soreness, fatigue, sleep and pain count.`) : null,
+    h("div", { class: "card" }, h("h2", {}, "Players"), h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Player", "Today", "Why", "Notes", "Wellness"].map((c) => h("th", {}, c)))),
+      h("tbody", {}, t.players.map((p) => h("tr", { class: "click", onclick: openP(p.player_id) }, h("td", {}, p.name), h("td", { class: "act " + p.action }, p.label),
+        h("td", { class: "wrap" }, p.reasons.join(" ")), h("td", { class: "wrap sub" }, p.notes.join(" ") || "–"),
+        h("td", {}, p.wellness ? `sore ${p.wellness.soreness ?? "–"} · fatigue ${p.wellness.fatigue ?? "–"}` : "–")))))))];
+}
+
+function groupPick(d, g, p) {
+  const sel = h("select", { "aria-label": "Group for " + p.name, onchange: async (e) => {
+    try {
+      await api(`/squads/${S.squad.id}/seasons/${S.season.id}/sc-groups/${p.player_id}`, { method: "PUT", body: { area: e.target.value || null } });
+      toast(e.target.value ? `${p.name} moved` : `${p.name} back to the automatic group`); physicalTab();
+    } catch (x) { toast(x.message); }
+  } }, h("option", { value: "" }, p.moved ? "Automatic group" : g.label + " (automatic)"),
+    d.group_options.map((o) => h("option", { value: o.key, selected: p.moved && o.key === g.key }, o.label + " group")));
+  return h("span", {}, sel, p.moved ? h("span", { class: "chip" }, "moved") : null);
+}
+
+function scLogForm(host, g, s) {
+  if (host.childNodes.length) return host.replaceChildren();
+  const date = h("input", { type: "date", value: todayStr(), max: todayStr() });
+  const mins = h("input", { type: "number", min: 10, max: 180, value: s ? s.minutes : 45, class: "tiny" });
+  const rpe = h("input", { type: "number", min: 1, max: 10, value: 6, class: "tiny" });
+  const rows = g.players.map((p) => ({ p, here: h("input", { type: "checkbox", checked: true }), rpe: h("input", { type: "number", min: 1, max: 10, class: "tiny", placeholder: "same" }) }));
+  const err = h("div", { class: "err", role: "alert" });
+  host.replaceChildren(h("div", { class: "card inner" }, h("h3", {}, `Log ${g.label.toLowerCase()} session`),
+    h("p", { class: "sub" }, "Untick anyone who was absent. Leave a player's RPE empty to use the session RPE. Logging the same group and date again replaces it."),
+    h("div", { class: "grid" }, field("Date", date), field("Minutes", mins), field("Session RPE (1-10)", rpe)),
+    h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Present", "Player", "Own RPE"].map((c) => h("th", {}, c)))),
+      h("tbody", {}, rows.map((r) => h("tr", {}, h("td", {}, r.here), h("td", {}, r.p.name), h("td", {}, r.rpe)))))),
+    err, h("div", { class: "row" }, h("button", { class: "small", onclick: async () => {
+      err.textContent = "";
+      try {
+        const x = await api(`/squads/${S.squad.id}/sc-sessions`, { method: "POST", body: { log_date: date.value, group: g.key, minutes: Number(mins.value), rpe: Number(rpe.value),
+          players: rows.map((r) => ({ player_id: r.p.player_id, attended: r.here.checked, rpe: r.rpe.value ? Number(r.rpe.value) : null })) } });
+        toast(`Session logged: ${x.present} present, ${x.absent} absent`); physicalTab();
+      } catch (e) { err.textContent = e.message; }
+    } }, "Save session"), h("button", { class: "small ghost", onclick: () => host.replaceChildren() }, "Cancel"))));
+}
+
+function attendanceCard(a) {
+  return h("div", { class: "card" }, h("h2", {}, `Group sessions, last ${a.days} days`),
+    a.sessions.length ? [catTable(["Date", "Group", "Present", "Absent", "Load (all present)"], a.sessions.map((x) => [fdate(String(x.date).slice(0, 10)), x.group, x.present, x.absent, x.load])),
+      h("h3", {}, "Attendance by player (lowest first)"),
+      catTable(["Player", "Attended", "%"], a.players.map((x) => [x.name, `${x.attended} of ${x.of}`, Math.round(100 * x.attended / x.of) + "%"]))]
+      : h("p", { class: "sub" }, "No group sessions logged yet. Use \"Log this session\" on a group after you run it: present players get the load in their workload."));
+}
+
+function physTargets(d) {
+  const rows = d.targets.filter((p) => p.targets.length);
+  const none = d.targets.filter((p) => !p.targets.length).map((p) => p.name);
+  return h("div", { class: "card" }, h("h2", {}, `Targets for the ${d.retest.label ? d.retest.label.toLowerCase() : "next"} test`),
+    h("p", { class: "sub" }, "Each priority area's weakest test: the result that would lift the player about 15 rank points (never more than 8% in one window), " +
+      "or the age-group expected value when that is higher. " + (d.later_window ? "Reached / not yet is checked against the later window." : "Checked automatically after the next test.")),
+    h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Player", "Area (rank)", "Test", "Now", "Target", "Latest", "Result"].map((c) => h("th", {}, c)))),
+      h("tbody", {}, rows.flatMap((p) => p.targets.map((t, i) => h("tr", {}, h("td", {}, i === 0 ? h("a", { href: "#", onclick: (e) => { e.preventDefault(); openP(p.player_id)(); } }, p.name) : ""),
+        h("td", {}, `${t.area} (${Charts.num(t.rank, 0)})`), h("td", {}, `${t.test} (${t.unit})`), h("td", {}, t.current), h("td", {}, h("strong", {}, t.target)), h("td", {}, t.latest ?? "–"),
+        h("td", {}, t.reached == null ? "–" : h("span", { class: "chip " + (t.reached ? "ok" : "warn") }, t.reached ? "Reached" : "Not yet")))))))),
+    none.length ? h("p", { class: "sub" }, "No priority area (nothing below the middle): " + none.join(", ") + ".") : null);
 }
 
 function physDashboard(d) {
@@ -1716,12 +1788,18 @@ function physGroups(d) {
     ...d.groups.map((g) => {
       const s = g.session, rows = [];
       if (s) s.parts.forEach((pt) => pt.items.forEach((it, i) => rows.push([i === 0 ? `${pt.part}${pt.minutes ? ` (${pt.minutes} min)` : ""}` : "", it.name, it.area_label || "", it.set || "", it.rep || it.time || "", it.rest || ""])));
-      return h("div", { class: "card" }, h("div", { class: "bar" }, h("h2", {}, `${g.label} (${g.players.length})`), s ? h("span", { class: "chip" }, `${s.phase_label} · about ${s.minutes} min`) : null),
-        h("p", {}, g.players.map((p, i) => [i ? ", " : "", h("a", { href: "#", onclick: (e) => { e.preventDefault(); openP(p.player_id)(); } }, p.name),
-          h("span", { class: "sub" }, p.rank != null ? ` (${Charts.num(p.rank, 0)})` : "")])),
+      const logHost = h("div");
+      return h("div", { class: "card" }, h("div", { class: "bar" }, h("h2", {}, `${g.label} (${g.players.length})`),
+          h("div", { class: "row" }, s ? h("span", { class: "chip" }, `${s.phase_label} · about ${s.minutes} min`) : null,
+            canCoach() ? h("button", { class: "small", onclick: () => scLogForm(logHost, g, s) }, "Log this session") : null)),
+        logHost,
+        h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Player", "Rank", "Also below the middle", "Group"].map((c) => h("th", {}, c)))),
+          h("tbody", {}, g.players.map((p) => h("tr", {}, h("td", {}, h("a", { href: "#", onclick: (e) => { e.preventDefault(); openP(p.player_id)(); } }, p.name)),
+            h("td", {}, p.rank != null ? Charts.num(p.rank, 0) : "–"), h("td", {}, p.also.join(", ") || "–"),
+            h("td", {}, canCoach() ? groupPick(d, g, p) : g.label)))))),
         s ? [s.second_focus ? h("p", { class: "sub" }, `Also covers: ${s.second_focus}, the group's next most common need.`) : null,
           catTable(["Part", "Exercise", "Area", "Sets", "Reps / time", "Rest"], rows), h("p", { class: "sub" }, s.note)] : null);
-    })];
+    }), attendanceCard(d.attendance)];
 }
 
 function physProgress(d) {

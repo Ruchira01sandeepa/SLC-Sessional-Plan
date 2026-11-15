@@ -171,3 +171,4 @@ table.week td{vertical-align:top;min-width:90px}
 .heatmap td.heat{text-align:center;font-weight:600}.heatmap td.heat.lo{background:color-mix(in srgb,var(--bad) 18%,transparent)}
 .heatmap td.heat.hi{background:color-mix(in srgb,var(--good) 18%,transparent)}.heatmap td.heat.na{color:var(--mute)}
 .tiles{gap:12px;flex-wrap:wrap}.tiles .tile{flex:1 1 160px;margin:0}.tiles .big{font-size:1.6rem;font-weight:700}
+.act{font-weight:700}.act.none,.act.recovery{color:var(--bad)}.act.light,.act.reduced,.act.upper{color:var(--warn)}.act.full{color:var(--good)}

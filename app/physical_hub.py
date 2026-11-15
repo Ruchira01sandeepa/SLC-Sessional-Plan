@@ -84,19 +84,33 @@ def heatmap(players: list[dict], cats: dict[int, dict]) -> dict:
 
 
 # ───────────── 2. S&C groups ─────────────
-def make_groups(rows: list[dict], max_groups: int = MAX_GROUPS, min_size: int = MIN_GROUP) -> list[dict]:
+GENERAL = "general"                  # the maintenance group's key in a coach's override
+
+
+def make_groups(rows: list[dict], max_groups: int = MAX_GROUPS, min_size: int = MIN_GROUP, overrides: dict[int, str] | None = None) -> list[dict]:
     """Group players by their weakest area. Areas with at least min_size players become groups (the biggest first, at most
-    max_groups); everyone else joins the group of their next-weakest area that exists, or a maintenance group."""
+    max_groups); everyone else joins the group of their next-weakest area that exists, or a maintenance group.
+    overrides: {player_id: area or "general"} - a coach's move; it always wins (and can create a group of its own)."""
+    overrides = overrides or {}
     count: dict[str, int] = {}
     for r in rows:
-        if r["weakest"]:
+        if r["weakest"] and r["player_id"] not in overrides:
             count[r["weakest"]] = count.get(r["weakest"], 0) + 1
     areas = [a for a, n in sorted(count.items(), key=lambda x: -x[1]) if n >= min_size][:max_groups]
     if not areas and count:                                   # a small squad: one group for the most common need
         areas = [max(count, key=count.get)]
+    for a in sorted({v for v in overrides.values() if v != GENERAL}):
+        if a not in areas:
+            areas.append(a)
     groups = {a: [] for a in areas}
     rest = []
+    moved = set()
     for r in rows:
+        ov = overrides.get(r["player_id"])
+        if ov:
+            (rest if ov == GENERAL else groups[ov]).append(r)
+            moved.add(r["player_id"])
+            continue
         ranked = sorted((a for a, v in r["areas"].items() if v is not None), key=lambda a: r["areas"][a])
         home = next((a for a in ranked if a in groups and r["areas"][a] < MIDDLE), None)
         if home:
@@ -107,7 +121,8 @@ def make_groups(rows: list[dict], max_groups: int = MAX_GROUPS, min_size: int = 
     if rest:
         out.append({"area": None, "label": "All-round maintenance group", "players": rest})
     for g in out:
-        g["players"] = sorted(({"player_id": r["player_id"], "name": r["name"], "role": r["role"],
+        g["key"] = g["area"] or GENERAL
+        g["players"] = sorted(({"player_id": r["player_id"], "name": r["name"], "role": r["role"], "moved": r["player_id"] in moved,
                                 "rank": r["areas"].get(g["area"]) if g["area"] else r["overall"],
                                 "also": [AREA_LABEL[a] for a, v in sorted(r["areas"].items(), key=lambda x: x[1] if x[1] is not None else 999)
                                          if v is not None and v < MIDDLE and a != g["area"]][:2]} for r in g["players"]),
@@ -133,7 +148,7 @@ def group_session(group: dict, phase: str, role_groups: list[str]) -> dict:
     for a, n in plan:
         if not a:
             continue
-        ex = [e for e in _pick(a, phase, role_groups, n + 3, priority=True, percentile=pct, ctx={"taken": taken, "seed": group["label"]})
+        ex = [e for e in _pick(a, phase, role_groups, n + 3, priority=pct is not None, percentile=pct, ctx={"taken": taken, "seed": group["label"]})
               if e["kind"] not in INJURY_KINDS]
         kept = []
         for e in ex:                                              # no near-duplicates (two versions of the same exercise)
@@ -229,3 +244,100 @@ def growth_rows(players: list[dict], measures: dict[int, list[dict]]) -> list[di
                     "velocity_cm_yr": g["velocity_cm_yr"], "stage": g["stage"], "stage_label": g["label"], "stage_source": g["source"],
                     "in_spurt": g["in_spurt"], "bowling_window": g["bowling_window"]})
     return out
+
+
+# ───────────── 5. today: what each player should do in S&C today ─────────────
+ACTIONS = {"full": "Full S&C session", "upper": "Upper body and trunk only", "reduced": "Reduced session",
+           "light": "Light only (activation and mobility)", "recovery": "Recovery only", "none": "No S&C today"}
+ACTION_ORDER = ["none", "recovery", "light", "reduced", "upper", "full"]
+
+
+def today_action(p: dict) -> dict:
+    """p: {availability, alerts_worst, alert_codes, pain_recent, soreness, fatigue, sleep_avg, match_today, match_tomorrow,
+    bowled_recent, role, in_spurt}. The strictest rule that applies decides; every rule that applies is listed as a reason."""
+    reasons, act = [], "full"
+
+    def stricter(a: str, why: str):
+        nonlocal act
+        reasons.append(why)
+        if ACTION_ORDER.index(a) < ACTION_ORDER.index(act):
+            act = a
+    if p.get("availability") == "unavailable":
+        stricter("none", "Unavailable (set by the physiotherapist).")
+    if p.get("pain_recent"):
+        stricter("none", "Pain reported in the last 2 days: refer to the physiotherapist.")
+    if p.get("alerts_worst") == "stop":
+        stricter("recovery", "A stop alert is open (workload).")
+    if p.get("match_today"):
+        stricter("none", "Match today.")
+    elif p.get("match_tomorrow"):
+        stricter("light", "Match tomorrow: nothing hard the day before.")
+    if p.get("availability") == "modified":
+        stricter("reduced", "Modified training (physiotherapist).")
+    if p.get("alerts_worst") == "warn":
+        stricter("reduced", "A workload warning is open" + (": " + ", ".join(p["alert_codes"]) if p.get("alert_codes") else "") + ".")
+    if (p.get("soreness") or 0) >= 8 or (p.get("fatigue") or 0) >= 8:
+        stricter("reduced", "High soreness or fatigue in the latest wellness check.")
+    if p.get("bowled_recent") and p.get("role") in ("fast_bowler", "all_rounder"):
+        stricter("upper", "Bowled today or yesterday: no jumps, sprints or heavy leg work.")
+    notes = []
+    if p.get("sleep_avg") is not None and p["sleep_avg"] < 7:
+        notes.append(f"Short sleep (average {p['sleep_avg']:.1f} h).")
+    if p.get("in_spurt") and act in ("full", "reduced", "upper"):
+        notes.append("Growth spurt: keep jumps and sprints at the low end.")
+    if act == "reduced":
+        notes.append("One set fewer on every exercise; no jumps or maximal sprints.")
+    if not reasons:
+        reasons.append("Nothing limits training today.")
+    return {"action": act, "label": ACTIONS[act], "reasons": reasons, "notes": notes}
+
+
+# ───────────── 6. targets for the next test ─────────────
+def test_targets(cat: dict, cohort_values: dict[str, list[float]], next_label: str | None, later: dict[str, float] | None,
+                 age_group: str | None, goal_fn) -> list[dict]:
+    """For each priority area (below the middle, weakest first, at most 3): the weakest test, the target for the next test and,
+    when a later window has the result, whether it was reached. goal_fn = player_profile.physical_goal."""
+    from .test_battery import BY_KEY, display
+    out = []
+    for f in cat.get("focus_areas", [])[:3]:
+        area = next(a for a in cat["areas"] if a["area"] == f["area"])
+        tested = [t for t in area["tests"] if t.get("percentile") is not None]
+        if not tested:
+            continue
+        weakest = min(tested, key=lambda t: t["percentile"])
+        g = goal_fn({**area, "source": "test"}, weakest["key"], cohort_values.get(weakest["key"]), next_label, age_group)
+        if not g:
+            continue
+        row = {"area": area["label"], "test": BY_KEY[weakest["key"]].label, "unit": g["unit"], "current": g["current_display"],
+               "target": g["target_display"], "rank": area["percentile"], "reached": None, "latest": None}
+        if later and later.get(weakest["key"]) is not None:
+            t = BY_KEY[weakest["key"]]
+            v = later[weakest["key"]]
+            row["latest"] = display(t, v)
+            row["reached"] = v >= g["target"] if t.higher_is_better else v <= g["target"]
+        out.append(row)
+    return out
+
+
+# ───────────── 7. group sessions logged ─────────────
+SC_MARK = "sc:"                      # WorkloadLog.match_participation prefix of a logged group S&C session ("sc:endurance")
+
+
+def attendance(logs: list[dict], players: list[dict], today: date, days: int = 28) -> dict:
+    """logs: [{player_id, log_date, attended, group, load}] of group S&C sessions. A session is (date, group). Returns the
+    sessions and, per player, attended / planned in the last `days` days (lowest attendance first)."""
+    since = today - timedelta(days=days)
+    recent = [x for x in logs if x["log_date"] >= since]
+    sessions: dict[tuple, dict] = {}
+    for x in recent:
+        k = (x["log_date"], x["group"])
+        s = sessions.setdefault(k, {"date": x["log_date"], "group": x["group"], "present": 0, "absent": 0, "load": 0})
+        s["present" if x["attended"] else "absent"] += 1
+        s["load"] += x.get("load") or 0
+    per = []
+    for p in players:
+        mine = [x for x in recent if x["player_id"] == p["id"]]
+        if mine:
+            per.append({"player_id": p["id"], "name": p["name"], "attended": sum(1 for x in mine if x["attended"]), "of": len(mine)})
+    return {"days": days, "sessions": sorted(sessions.values(), key=lambda s: (s["date"], s["group"]), reverse=True),
+            "players": sorted(per, key=lambda r: (r["attended"] / r["of"], r["name"]))}

@@ -3,7 +3,9 @@
 Admin / S&C download a template pre-filled with the squad's players, fill it, and upload it. The upload is previewed first
 (nothing is saved) and then confirmed. Results are confidential: players do not see them."""
 import re
-from datetime import timedelta
+from datetime import date, timedelta
+
+from pydantic import BaseModel, Field
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import select
@@ -17,14 +19,16 @@ from ..exercises import bowling_types
 from ..individual_plan import build_individual_plan
 from ..individual_plan_excel import build_player_workbook
 from ..models import (FitnessPhase, PdpRating, PdpRubricItem, Player, PlayerRole, Screening, Season, SkillTemplate, TestImportBatch,
-                      TestResult, TestSession, User, WorkloadLog, EventType, MaturityStatus, Squad)
+                      TestResult, TestSession, User, WorkloadLog, EventType, MaturityStatus, Squad, ScGroupAssignment, WellnessLog)
 from .development import latest_role_skills
 from ..permissions import authorize_player, authorize_squad, role_allows
 from ..test_workload import bowling_advice, day_load, training_targets
+from ..player_profile import physical_goal
 from ..age_groups import profile as age_profile
 from ..workload_rules import effective_limits
 from ..workload_service import sync_alerts
-from ..test_battery import BY_KEY, LEVEL_LABEL, TRIALS, WINDOW_LABEL, WINDOWS, display
+from ..test_battery import AREAS, BY_KEY, LEVEL_LABEL, TRIALS, WINDOW_LABEL, WINDOWS, display
+from ..physical_report_excel import build_physical_report
 from ..test_import import MAX_BYTES, parse_workbook
 from ..test_progress import progress as build_progress
 from ..test_template_excel import build_template
@@ -465,7 +469,9 @@ def physical_page(squad_id: int, season_id: int, window: str | None = None, db: 
     today = today_lk()
     phase = ph.current_phase(phases, today)
     by_id = {p.id: p for p in players}
-    groups = ph.make_groups(dash["rows"])
+    overrides = {a.player_id: a.area for a in db.scalars(select(ScGroupAssignment).where(ScGroupAssignment.season_id == season_id))
+                 if a.player_id in by_id}
+    groups = ph.make_groups(dash["rows"], overrides=overrides)
     for g in groups:
         rg: list[str] = []
         for m in g["players"]:
@@ -485,13 +491,166 @@ def physical_page(squad_id: int, season_id: int, window: str | None = None, db: 
     for s in db.scalars(select(TestSession).where(TestSession.player_id.in_([p.id for p in players] or [-1]))):
         if s.test_date and (s.height_cm or s.weight_kg):
             measures[s.player_id].append({"date": s.test_date, "height_cm": s.height_cm, "weight_kg": s.weight_kg})
+    later = None
+    order = list(WINDOWS)
+    for w in order[order.index(window) + 1:]:
+        if w in wins:
+            later = w
+            break
+    cohort_vals: dict[str, list[float]] = {}
+    for s_ in (wins[window][1].values() if window in wins else []):
+        for k, v in _finals(s_).items():
+            cohort_vals.setdefault(k, []).append(v)
+    targets = []
+    for r in dash["rows"]:
+        lt = _finals(wins[later][1][r["player_id"]]) if later and r["player_id"] in wins[later][1] else None
+        t = ph.test_targets(cats[r["player_id"]], cohort_vals, retest.get("label") or "next test", lt, db.get(Squad, squad_id).age_group, physical_goal)
+        targets.append({"player_id": r["player_id"], "name": r["name"], "targets": t})
+    growth = ph.growth_rows(plist, measures)
     return {"season": {"id": season.id, "name": season.name}, "window": window, "window_label": WINDOW_LABEL[window],
+            "later_window": later, "targets": targets, "today": _today_board(db, squad_id, players, {g["player_id"]: g for g in growth}),
+            "attendance": _attendance(db, players), "group_options": [{"key": a["area"], "label": a["label"]} for a in dash["areas"]] + [{"key": ph.GENERAL, "label": "All-round maintenance"}],
             "windows_with_results": list(wins), "phase": phase, "phase_label": ph.PHASE_LABEL.get(phase) if phase else None,
             "phases_source": phases_source, "dashboard": dash, "groups": groups, "retest": retest, "progress": progress,
-            "growth": ph.growth_rows(plist, measures),
+            "growth": growth,
             "notes": ["Ranks compare each player with the same-level group in this window (100 = best, below 50 = priority, 70+ = strength). "
                       "They are not pass or fail marks.",
                       "S&C groups are formed from each player's weakest area; a player can be moved by the coach. Group doses are a conservative "
                       "range; each player's own S&C plan has their personal dose.",
                       "Growth rate needs two heights at least 3 months apart. Record height and mass at every test.",
                       "Every exercise and number is a proposal for the coach."]}
+
+
+def _today_board(db: Session, squad_id: int, players: list[Player], growth_by: dict) -> dict:
+    """What each player should do in S&C today: availability, alerts, latest wellness, matches today/tomorrow, recent bowling."""
+    today = today_lk()
+    ids = [p.id for p in players] or [-1]
+    evals = evaluate_players(db, players, today)
+    well: dict[int, list] = {}
+    for w in db.scalars(select(WellnessLog).where(WellnessLog.player_id.in_(ids), WellnessLog.log_date >= today - timedelta(days=6),
+                                                  WellnessLog.log_date <= today).order_by(WellnessLog.log_date)):
+        well.setdefault(w.player_id, []).append(w)
+    bowled = {pid for pid, in db.execute(select(WorkloadLog.player_id).where(
+        WorkloadLog.player_id.in_(ids), WorkloadLog.log_date >= today - timedelta(days=1), WorkloadLog.log_date <= today, WorkloadLog.balls_bowled > 0))}
+    matches = {_local_date(e.start_at) for e in db.scalars(select(CalendarEvent).where(
+        CalendarEvent.squad_id == squad_id, CalendarEvent.event_type == EventType.match,
+        CalendarEvent.start_at >= _utc_naive(today, False), CalendarEvent.start_at < _utc_naive(today + timedelta(days=1), True)))}
+    rows = []
+    for p in players:
+        alerts, summ = evals[p.id]
+        ws = well.get(p.id, [])
+        recent = [w for w in ws if w.log_date >= today - timedelta(days=1)]
+        latest = recent[-1] if recent else None
+        sleeps = [w.sleep_hours for w in ws if w.sleep_hours is not None][-3:]
+        info = {"availability": p.availability.value, "alerts_worst": summ.get("alerts_worst"),
+                "alert_codes": sorted({a.message.split(".")[0] for a in alerts if a.severity == "warn"})[:2],
+                "pain_recent": any(w.pain_flag for w in ws if w.log_date >= today - timedelta(days=2)),
+                "soreness": latest.soreness if latest else None, "fatigue": latest.fatigue if latest else None,
+                "sleep_avg": sum(sleeps) / len(sleeps) if len(sleeps) == 3 else None,
+                "match_today": today in matches, "match_tomorrow": (today + timedelta(days=1)) in matches,
+                "bowled_recent": p.id in bowled, "role": p.role.value, "in_spurt": growth_by.get(p.id, {}).get("in_spurt")}
+        a = ph.today_action(info)
+        rows.append({"player_id": p.id, "name": p.full_name, "role": p.role.value, **a,
+                     "wellness": {"date": latest.log_date, "soreness": latest.soreness, "fatigue": latest.fatigue} if latest else None})
+    rows.sort(key=lambda r: (ph.ACTION_ORDER.index(r["action"]), r["name"]))
+    counts = {k: sum(1 for r in rows if r["action"] == k) for k in ph.ACTION_ORDER}
+    return {"date": today, "match_today": today in matches, "match_tomorrow": (today + timedelta(days=1)) in matches,
+            "counts": counts, "labels": ph.ACTIONS, "players": rows,
+            "no_wellness": [r["name"] for r in rows if r["wellness"] is None]}
+
+
+def _attendance(db: Session, players: list[Player]) -> dict:
+    ids = [p.id for p in players] or [-1]
+    today = today_lk()
+    logs = [{"player_id": r.player_id, "log_date": r.log_date, "attended": r.attended, "group": r.match_participation[len(ph.SC_MARK):],
+             "load": (r.rpe or 0) * (r.duration_min or 0) if r.attended else 0}
+            for r in db.scalars(select(WorkloadLog).where(WorkloadLog.player_id.in_(ids), WorkloadLog.log_date >= today - timedelta(days=28),
+                                                          WorkloadLog.match_participation.like(ph.SC_MARK + "%")))]
+    return ph.attendance(logs, [{"id": p.id, "name": p.full_name} for p in players], today)
+
+
+class GroupMoveIn(BaseModel):
+    area: str | None = Field(default=None, max_length=30)          # None = back to the automatic group
+
+
+@router.put("/squads/{squad_id}/seasons/{season_id}/sc-groups/{player_id}")
+def move_to_group(squad_id: int, season_id: int, player_id: int, body: GroupMoveIn, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """A coach moves a player to another S&C group (or back to the automatic one with area = null)."""
+    authorize_squad(db, user, squad_id, "workload.limits")
+    _season(db, squad_id, season_id)
+    p = db.get(Player, player_id)
+    if p is None or p.squad_id != squad_id:
+        raise HTTPException(404, "Player not found in this squad")
+    if body.area is not None and body.area != ph.GENERAL and body.area not in AREAS:
+        raise HTTPException(422, f"Unknown group '{body.area}'")
+    row = db.scalar(select(ScGroupAssignment).where(ScGroupAssignment.season_id == season_id, ScGroupAssignment.player_id == player_id))
+    if body.area is None:
+        if row:
+            db.delete(row)
+    else:
+        if row is None:
+            row = ScGroupAssignment(season_id=season_id, player_id=player_id, area=body.area)
+            db.add(row)
+        row.area, row.set_by = body.area, user.id
+    audit(db, user, "sc_group.moved", "player", player_id, body.area or "automatic")
+    db.commit()
+    return {"player_id": player_id, "area": body.area}
+
+
+class ScAttend(BaseModel):
+    player_id: int
+    attended: bool = True
+    rpe: int | None = Field(default=None, ge=1, le=10)
+
+
+class ScSessionIn(BaseModel):
+    log_date: date
+    group: str = Field(min_length=1, max_length=26)
+    minutes: int = Field(ge=10, le=180)
+    rpe: int = Field(ge=1, le=10)
+    players: list[ScAttend] = Field(min_length=1, max_length=60)
+
+
+@router.post("/squads/{squad_id}/sc-sessions", status_code=201)
+def log_group_session(squad_id: int, body: ScSessionIn, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Log one group S&C session for many players at once: present players get the session in their workload (minutes x RPE),
+    absent ones an 'not attended' entry. Logging the same group and date again replaces it."""
+    authorize_squad(db, user, squad_id, "workload.limits")
+    if body.log_date > today_lk():
+        raise HTTPException(422, "A session cannot be logged in the future")
+    mark = ph.SC_MARK + body.group
+    ids = [x.player_id for x in body.players]
+    players = {p.id: p for p in db.scalars(select(Player).where(Player.squad_id == squad_id, Player.id.in_(ids)))}
+    missing = [i for i in ids if i not in players]
+    if missing:
+        raise HTTPException(422, "Some players are not in this squad")
+    for old in db.scalars(select(WorkloadLog).where(WorkloadLog.player_id.in_(ids), WorkloadLog.log_date == body.log_date,
+                                                    WorkloadLog.match_participation == mark)):
+        db.delete(old)
+    db.flush()
+    present = 0
+    for x in body.players:
+        if x.attended:
+            present += 1
+            db.add(WorkloadLog(player_id=x.player_id, log_date=body.log_date, session_type=EventType.training, attended=True,
+                               duration_min=body.minutes, rpe=x.rpe or body.rpe, session_intensity=body.rpe, recorded_by=user.id, match_participation=mark))
+        else:
+            db.add(WorkloadLog(player_id=x.player_id, log_date=body.log_date, session_type=EventType.training, attended=False,
+                               recorded_by=user.id, match_participation=mark))
+    db.flush()
+    for pid in ids:
+        sync_alerts(db, players[pid])
+    audit(db, user, "sc_session.logged", "squad", squad_id, f"{body.group} {body.log_date}: {present} of {len(ids)} present")
+    db.commit()
+    return {"present": present, "absent": len(ids) - present, "group": body.group, "log_date": body.log_date}
+
+
+@router.get("/squads/{squad_id}/seasons/{season_id}/physical-report.xlsx")
+def physical_report(squad_id: int, season_id: int, window: str | None = None, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """The squad's Physical page as one workbook: heat map, today, groups and sessions, targets, progress, growth."""
+    d = physical_page(squad_id, season_id, window, db, user)
+    squad = db.get(Squad, squad_id)
+    audit(db, user, "physical_report.exported", "season", season_id)
+    db.commit()
+    name = re.sub(r"[^A-Za-z0-9]+", "-", f"physical-report-{squad.name}-{d['season']['name']}-{d['window']}").strip("-") or "physical-report"
+    return Response(build_physical_report(squad.name, d), media_type=XLSX, headers={"Content-Disposition": f'attachment; filename="{name}.xlsx"'})

@@ -671,3 +671,15 @@ class PlanExerciseLog(Base):
     note: Mapped[str | None] = mapped_column(String(300))
     recorded_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+# ───────────── S&C groups: a coach's move of a player to another group (the rest are formed automatically) ─────────────
+class ScGroupAssignment(Base):
+    __tablename__ = "sc_group_assignments"
+    __table_args__ = (UniqueConstraint("season_id", "player_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    season_id: Mapped[int] = mapped_column(ForeignKey("seasons.id", ondelete="CASCADE"), index=True)
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id", ondelete="CASCADE"))
+    area: Mapped[str] = mapped_column(String(30))                    # a test area (endurance, power, ...) or "general" (maintenance group)
+    set_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    set_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
