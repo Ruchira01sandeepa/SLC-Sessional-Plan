@@ -362,3 +362,106 @@ def acknowledge(alert_id: int, db: Session = Depends(get_db), user: User = Depen
     audit(db, user, "alert.acknowledged", "alert", a.id, a.rule_code)
     db.commit()
     return _alert_out(a, player.full_name)
+
+
+# ───────────── earlier workload: weeks before the app was used, entered as one summary per player and week ─────────────
+from .. import earlier_workload as ew  # noqa: E402
+
+
+class EarlierRow(BaseModel):
+    player_id: int
+    sessions: int = Field(ge=0, le=7)
+    minutes: int | None = Field(default=None, ge=10, le=300)
+    rpe: int | None = Field(default=None, ge=1, le=10)
+    overs: float | None = Field(default=None, ge=0, le=100)
+    bowling_days: int | None = Field(default=None, ge=0, le=7)
+
+
+class EarlierWeek(BaseModel):
+    week_start: date
+    rows: list[EarlierRow] = Field(max_length=100)
+
+
+def _week_bounds(week_start: date) -> tuple[date, date]:
+    today = today_lk()
+    end = week_start + timedelta(days=6)
+    if end >= today:
+        raise HTTPException(422, "Earlier workload is for weeks that are already over. Log this week's sessions in the workload log.")
+    if week_start < today - timedelta(weeks=ew.MAX_WEEKS_BACK):
+        raise HTTPException(422, f"Earlier workload goes back at most {ew.MAX_WEEKS_BACK} weeks")
+    return week_start, end
+
+
+def _week_logs(db: Session, ids: list[int], start: date, end: date) -> dict[int, list[WorkloadLog]]:
+    out: dict[int, list[WorkloadLog]] = {i: [] for i in ids}
+    for r in db.scalars(select(WorkloadLog).where(WorkloadLog.player_id.in_(ids or [-1]), WorkloadLog.log_date >= start, WorkloadLog.log_date <= end)):
+        out[r.player_id].append(r)
+    return out
+
+
+def _is_coach_log(r: WorkloadLog) -> bool:
+    """A log a person entered (not the earlier-week spread, not the automatic test-day load)."""
+    return r.match_participation not in (ew.MARK, "test_battery")
+
+
+@router.get("/squads/{squad_id}/workload/earlier")
+def get_earlier(squad_id: int, week_start: date, db: Session = Depends(get_db), user: User = Depends(require("workload.limits"))):
+    """One week of earlier workload for every player: what was entered, and whether the week already has logged sessions."""
+    authorize_squad(db, user, squad_id, "workload.limits")
+    start, end = _week_bounds(week_start)
+    players = list(db.scalars(select(Player).where(Player.squad_id == squad_id, Player.is_active.is_(True)).order_by(Player.squad_no, Player.full_name)))
+    logs = _week_logs(db, [p.id for p in players], start, end)
+    rows = []
+    for p in players:
+        mine = [r for r in logs[p.id] if r.match_participation == ew.MARK]
+        rows.append({"player_id": p.id, "name": p.full_name, "role": p.role.value, "squad_no": p.squad_no,
+                     "bowls": p.role.value in ("fast_bowler", "spin_bowler", "all_rounder"),
+                     "entry": ew.summarise([{"duration_min": r.duration_min, "rpe": r.rpe, "balls_bowled": r.balls_bowled} for r in mine]),
+                     "logged_sessions": sum(1 for r in logs[p.id] if _is_coach_log(r)),
+                     "other_days": sorted({r.log_date.isoformat() for r in logs[p.id] if r.match_participation != ew.MARK})})
+    return {"week_start": start, "week_end": end, "players": rows}
+
+
+@router.put("/squads/{squad_id}/workload/earlier")
+def put_earlier(squad_id: int, body: EarlierWeek, db: Session = Depends(get_db), user: User = Depends(require("workload.limits"))):
+    """Save one week: each row replaces that player's earlier-week logs for the week (sessions 0 clears it). A week in which
+    a coach already logged sessions is refused for that player, so real logs are never doubled or overwritten."""
+    authorize_squad(db, user, squad_id, "workload.limits")
+    start, end = _week_bounds(body.week_start)
+    players = {p.id: p for p in db.scalars(select(Player).where(Player.squad_id == squad_id, Player.id.in_([r.player_id for r in body.rows] or [-1])))}
+    logs = _week_logs(db, list(players), start, end)
+    errors, saved, cleared = [], 0, 0
+    plans = {}
+    for r in body.rows:
+        p = players.get(r.player_id)
+        if p is None:
+            errors.append({"player_id": r.player_id, "message": "Not a player of this squad"})
+            continue
+        if r.sessions and any(_is_coach_log(x) for x in logs[p.id]):
+            errors.append({"player_id": p.id, "message": f"{p.full_name} already has sessions logged in this week: use the workload log instead"})
+            continue
+        if r.overs and p.role.value not in ("fast_bowler", "spin_bowler", "all_rounder"):
+            errors.append({"player_id": p.id, "message": f"{p.full_name} does not bowl: leave overs empty"})
+            continue
+        try:
+            avoid = {x.log_date for x in logs[p.id] if x.match_participation != ew.MARK}
+            plans[p.id] = ew.spread_week(start, sessions=r.sessions, minutes=r.minutes or 0, rpe=r.rpe or 0, overs=r.overs,
+                                         bowling_days=r.bowling_days, avoid=avoid) if r.sessions else []
+        except ValueError as e:
+            errors.append({"player_id": p.id, "message": f"{p.full_name}: {e}"})
+    if errors:
+        raise HTTPException(422, {"message": "Nothing was saved. Fix these rows and save again.", "errors": errors})
+    for pid, new in plans.items():
+        for x in logs[pid]:
+            if x.match_participation == ew.MARK:
+                db.delete(x)
+        for n in new:
+            db.add(WorkloadLog(player_id=pid, session_type=EventType.training, attended=True, recorded_by=user.id, match_participation=ew.MARK, **n))
+        saved += bool(new)
+        cleared += not new
+    db.flush()
+    for pid in plans:
+        sync_alerts(db, players[pid])
+    audit(db, user, "workload.earlier_saved", "squad", squad_id, f"week {start}: {saved} saved, {cleared} cleared")
+    db.commit()
+    return {"week_start": start, "saved": saved, "cleared": cleared}

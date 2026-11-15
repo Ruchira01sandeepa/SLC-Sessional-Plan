@@ -65,7 +65,8 @@ async function api(path, opts = {}) {
     if (res.status === 401 && S.token) { signOut(); throw new Error("Session expired - please sign in again"); }
     if (res.status === 403 && data.detail === "password_change_required") { showChangePassword(); throw new Error("Change your password to continue"); }
     const d = data.detail;
-    throw new Error(Array.isArray(d) ? d.map((e) => (e.msg || "").replace(/^Value error, /, "")).join("; ") : d || "Something went wrong");
+    throw new Error(Array.isArray(d) ? d.map((e) => (e.msg || "").replace(/^Value error, /, "")).join("; ")
+      : d && typeof d === "object" ? [d.message, ...(d.errors || []).map((e) => e.message)].filter(Boolean).join(" · ") : d || "Something went wrong");
   }
   return data;
 }
@@ -1061,6 +1062,7 @@ async function workloadTab() {
   $("#main").replaceChildren(h("h1", {}, "Workload"),
     h("p", { class: "sub" }, "Alerts are prompts for the coach and physio, not a diagnosis. Fast-bowler limits are provisional."),
     h("div", { class: "card" }, h("h2", {}, "Open alerts"), alertList(alerts, ack)),
+    can("coach", "sc_coach", "admin") ? earlierCard() : null,
     h("div", { class: "card" }, h("h2", {}, "Squad overview"), h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {},
       ["Player", "Role", "Availability", "7-day load", "Load ratio", "Overs (7 d)", "Bowling days", "Status"].map((c) => h("th", {}, c)))),
       h("tbody", {}, rows.map((r) => h("tr", { class: "click", onclick: () => { S.pid = r.player_id; S.from = S.tab; go("players"); } },
@@ -1068,6 +1070,62 @@ async function workloadTab() {
         h("td", {}, r.acute_load_7d), h("td", {}, r.acwr == null ? "needs 3 weeks" : r.acwr),
         h("td", {}, BOWLS.includes(r.role) ? r.overs_7d : "–"), h("td", {}, BOWLS.includes(r.role) ? r.bowling_days_7d : "–"), h("td", {}, sevChip(r.worst_severity))))))),
       h("p", { class: "sub" }, "Load = RPE × minutes. Load ratio = 7-day ÷ 4-week average (needs 3 weeks of logs).")));
+}
+
+// ───────────── earlier workload (weeks before the app was used) ─────────────
+const mondayOf = (d) => { const x = new Date(d + "T00:00:00"); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x.toLocaleDateString("en-CA"); };
+const addDays = (iso, n) => { const x = new Date(iso + "T00:00:00"); x.setDate(x.getDate() + n); return x.toLocaleDateString("en-CA"); };
+
+function earlierCard() {
+  const host = h("div", { class: "card" });
+  const lastWeek = addDays(mondayOf(todayStr()), -7);
+  const weeks = Array.from({ length: 8 }, (_, i) => addDays(lastWeek, -7 * i));
+  const pick = h("select", { "aria-label": "Week" }, weeks.map((w) => h("option", { value: w }, `Week of ${fdate(w)} – ${fdate(addDays(w, 6))}`)));
+  const body = h("div");
+  const msg = h("div", { class: "err", role: "alert" });
+  let current = null;
+  const num = (v, min, max, step = "1", ph = "") => h("input", { type: "number", min, max, step, inputMode: "decimal", value: v ?? "", placeholder: ph, class: "tiny" });
+  const load = async () => {
+    msg.textContent = "";
+    current = await api(`/squads/${S.squad.id}/workload/earlier?week_start=${pick.value}`);
+    current.inputs = current.players.map((r) => ({ r, s: num(r.entry?.sessions, 0, 7), m: num(r.entry?.minutes, 10, 300, "5"), e: num(r.entry?.rpe, 1, 10),
+      o: r.bowls ? num(r.entry?.overs, 0, 100, "0.1") : null, b: r.bowls ? num(r.entry?.bowling_days, 0, 7) : null }));
+    body.replaceChildren(h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {},
+      ["No", "Player", "Sessions", "Avg minutes", "Avg RPE (1-10)", "Overs", "Bowling days", "Week load", ""].map((x) => h("th", {}, x)))),
+      h("tbody", {}, current.inputs.map(({ r, s, m, e, o, b }) => {
+        const out = h("td", {}, r.entry ? r.entry.load : "–");
+        const upd = () => { out.textContent = s.value && m.value && e.value ? Number(s.value) * Number(m.value) * Number(e.value) : "–"; };
+        [s, m, e].forEach((x) => (x.oninput = upd));
+        const locked = r.logged_sessions > 0;
+        if (locked) [s, m, e, o, b].forEach((x) => x && (x.disabled = true));
+        return h("tr", {}, h("td", {}, r.squad_no ?? "–"), h("td", {}, r.name), h("td", {}, s), h("td", {}, m), h("td", {}, e), h("td", {}, o || "–"), h("td", {}, b || "–"), out,
+          h("td", {}, locked ? h("span", { class: "chip", title: "Sessions are already logged in this week" }, "Logged") : r.entry ? h("span", { class: "chip ok" }, "Entered") : null));
+      })))));
+  };
+  const copyPrev = async () => {
+    try {
+      const prev = await api(`/squads/${S.squad.id}/workload/earlier?week_start=${addDays(pick.value, -7)}`);
+      const by = Object.fromEntries(prev.players.map((r) => [r.player_id, r.entry]));
+      current.inputs.forEach(({ r, s, m, e, o, b }) => { const x = by[r.player_id]; if (!x || s.disabled) return;
+        s.value = x.sessions; m.value = x.minutes; e.value = x.rpe; if (o) o.value = x.overs ?? ""; if (b) b.value = x.bowling_days ?? ""; s.oninput(); });
+    } catch (x) { msg.textContent = x.message; }
+  };
+  const save = async () => {
+    msg.textContent = "";
+    const rows = current.inputs.filter(({ s }) => !s.disabled && s.value !== "").map(({ r, s, m, e, o, b }) => ({ player_id: r.player_id, sessions: Number(s.value),
+      minutes: m.value ? Number(m.value) : null, rpe: e.value ? Number(e.value) : null, overs: o && o.value ? Number(o.value) : null, bowling_days: b && b.value ? Number(b.value) : null }));
+    if (!rows.length) return toast("Fill at least one player's sessions");
+    try { const x = await api(`/squads/${S.squad.id}/workload/earlier`, { method: "PUT", body: { week_start: pick.value, rows } });
+      toast(`Week saved: ${x.saved} player(s)` + (x.cleared ? `, ${x.cleared} cleared` : "")); await load(); } catch (e) { msg.textContent = e.message; }
+  };
+  pick.onchange = () => load().catch((x) => (msg.textContent = x.message));
+  host.append(h("h2", {}, "Earlier workload"),
+    h("p", { class: "sub" }, "Training from before the app was used, one line per player and week (sessions, average minutes and RPE; overs and bowling days for bowlers). " +
+      "It lets the load ratio and the fast-bowler checks work from the start. Weeks with sessions already logged are locked. Sessions 0 clears a week."),
+    h("div", { class: "row" }, pick, h("button", { class: "small ghost", onclick: copyPrev }, "Copy previous week"), h("button", { class: "small", onclick: save }, "Save week")),
+    msg, body);
+  load().catch((x) => (msg.textContent = x.message));
+  return host;
 }
 
 function weekBars(weeks, chronic) {
@@ -1609,6 +1667,53 @@ async function testingCard(p, host, window) {
   }
 }
 
+// ───────────── workload from the testing record ─────────────
+const LIMIT_TXT = (l) => `${l.max_spell_overs ?? "–"} a spell · ${l.max_match_day_overs ?? "–"} a day · ${l.max_bowling_days_week ?? "–"} days/wk`;
+
+async function testWorkloadCard(host, window) {
+  const d = await api(`/squads/${S.squad.id}/seasons/${S.season.id}/test-workload?window=${window}`);
+  const canLog = can("coach", "sc_coach", "admin");
+  if (!d.players.length) return host.replaceChildren(h("h2", {}, "Workload from testing"), h("p", { class: "sub" }, "No test results in this window yet."));
+  const logged = (r) => r.logged === "system" ? h("span", { class: "chip ok" }, `In workload (${r.logged_load})`)
+    : r.logged === "coach" ? h("span", { class: "chip" }, "Logged by a coach") : h("span", { class: "chip warn" }, "Not in workload");
+  const detail = h("div");
+  const show = (r) => {
+    const parts = r.day_load.parts;
+    detail.replaceChildren(h("div", { class: "card inner" },
+      h("div", { class: "bar" }, h("h3", {}, r.player), h("button", { class: "small ghost", onclick: () => detail.replaceChildren() }, "← Back")),
+      h("h4", {}, `Test-day load · ${fdate(String(r.test_date).slice(0, 10))} · ${r.day_load.minutes} min · session RPE ${r.day_load.rpe} · ${r.day_load.load} units`),
+      catTable(["Part", "Minutes", "RPE", "Load", "Based on"], parts.map((x) => [x.label, x.minutes, x.rpe, x.load, x.basis])),
+      h("h4", {}, "Training loads from the tests"),
+      catTable(["Quality", "Test result", "Training dose", "Why"], r.targets.map((t) => [t.quality, `${t.test}: ${t.result}`, t.prescription, t.why])),
+      r.bowling ? [h("h4", {}, "Fast-bowling workload"),
+        catTable(["", "Overs a spell", "Overs a day", "Bowling days a week"], [
+          ["Limits now", r.bowling.limits.max_spell_overs, r.bowling.limits.max_match_day_overs, r.bowling.limits.max_bowling_days_week],
+          ["Suggested from the tests", r.bowling.suggested.max_spell_overs, r.bowling.suggested.max_match_day_overs, r.bowling.suggested.max_bowling_days_week]]),
+        h("ul", {}, r.bowling.reasons.map((x) => h("li", {}, x))),
+        h("p", { class: "sub" }, `Last 7 days: ${r.bowling.current.overs_7d ?? 0} overs on ${r.bowling.current.bowling_days_7d} day(s). ` +
+          `Load 7 days: ${r.load_7d ?? "–"} · load ratio: ${r.acwr ?? "needs 3 weeks of logs"}.`)] : null));
+    detail.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  const pace = d.players.filter((r) => r.bowling);
+  const msg = h("div", { class: "err", role: "alert" });
+  host.replaceChildren(h("div", { class: "bar" }, h("h2", {}, `Workload from testing · ${d.window_label}`),
+      canLog ? h("button", { class: "small", onclick: async () => {
+        msg.textContent = "";
+        try { const x = await api(`/squads/${S.squad.id}/seasons/${S.season.id}/test-workload/log?window=${window}`, { method: "POST" });
+          toast(`Test-day load: ${x.logged} added, ${x.updated} updated` + (x.coach_logged ? `, ${x.coach_logged} kept (logged by a coach)` : ""));
+          testWorkloadCard(host, window); } catch (e) { msg.textContent = e.message; }
+      } }, "Add test-day load to workload") : null),
+    h("p", { class: "sub" }, "Click a player for the test-day load, training doses from their results and (pace bowlers) bowling workload."), msg,
+    h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["No", "Player", "Role", "Test-day load", "Workload", "Training doses", "Bowling limit"].map((x) => h("th", {}, x)))),
+      h("tbody", {}, d.players.map((r) => h("tr", { class: "click", onclick: () => show(r) },
+        h("td", {}, r.squad_no ?? "–"), h("td", {}, r.player), h("td", {}, ROLE[r.role]),
+        h("td", {}, `${r.day_load.minutes} min · RPE ${r.day_load.rpe} · ${r.day_load.load}`), h("td", {}, logged(r)), h("td", {}, `${r.targets.length} doses`),
+        h("td", {}, r.bowling ? (r.bowling.stricter ? h("span", { class: "chip warn" }, "Stricter suggested") : h("span", { class: "chip ok" }, "Normal")) : "–")))))),
+    pace.length ? [h("h3", {}, "Fast bowlers and pace all-rounders"), catTable(["Player", "Limits now", "Suggested from the tests", "Overs (7 d)", "Days (7 d)", "Why"],
+      pace.map((r) => [r.player, LIMIT_TXT(r.bowling.limits), LIMIT_TXT(r.bowling.suggested), r.bowling.current.overs_7d ?? 0, r.bowling.current.bowling_days_7d, r.bowling.reasons.join(" ")]))] : null,
+    detail, h("details", {}, h("summary", {}, "How these are worked out"), d.notes.map((n) => h("p", { class: "sub" }, n))));
+}
+
 async function testingTab() {
   const main = $("#main");
   if (!S.season) return main.replaceChildren(h("h1", {}, "Tests"), h("div", { class: "card" }, "This squad has no season yet. Create one in Admin → Seasons."));
@@ -1668,6 +1773,9 @@ async function testingTab() {
       h("tbody", {}, c.players.map((r) => h("tr", { class: "click", onclick: () => { S.pid = r.player_id; S.from = S.tab; go("players"); } },
         h("td", {}, r.player), h("td", {}, r.level_label || "Not tested"), h("td", {}, r.band ? bandChip(r) : "–"), h("td", {}, r.overall ?? "–"),
         h("td", {}, r.focus_areas.join(", ") || "–"), h("td", {}, readyChip(r.readiness))))))));
+  const twHost = h("div", { class: "card" });
+  main.insertBefore(twHost, table.nextSibling);
+  testWorkloadCard(twHost, window).catch((x) => twHost.replaceChildren(h("div", { class: "err" }, x.message)));
   const sp = await api(`/squads/${S.squad.id}/seasons/${S.season.id}/test-progress`);
   if (sp.windows_with_results.length >= 2) {
     prog.replaceChildren(h("h2", {}, "Progress since the first test"),
