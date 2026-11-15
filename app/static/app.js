@@ -1782,6 +1782,7 @@ function physSeason() {
       ...p.mesocycles.map((m) => h("details", { class: "card", open: m.number === 1 },
         h("summary", {}, h("strong", {}, m.label), ` · ${fdate(String(m.start).slice(0, 10))} – ${fdate(String(m.end).slice(0, 10))} · ${m.weeks} week${m.weeks === 1 ? "" : "s"}` +
           (m.targets.length ? " · targets: " + m.targets.map((t) => t.label).join(" + ") : "")),
+        h("div", { class: "row" }, m.methods.map((x) => h("span", { class: "chip" }, x)), h("span", { class: "chip " + (m.new_complex ? "warn" : "ok") }, m.new_complex ? "New exercise complex" : "Same complex as the last mesocycle")),
         catTable(["", ""], [["Targets", m.targets.map((t) => `${t.label} (${t.share})`).join(", ") || "–"], ["Retained", m.retained.join(", ") || "–"],
           ["Method", m.method], ["Dose", m.dose], ["Rest", m.rest], ["Frequency", m.frequency], ["Session length", m.minutes + " min"], ["Workout load", m.intensity]]),
         h("h4", {}, "Exercise complex (kept the whole mesocycle, in session order)"),

@@ -87,3 +87,38 @@ def test_endpoint_and_workbook(client, world, db):
     x = client.get(f"/squads/{world['squad_a']}/seasons/{sid}/sc-season-plan.xlsx", headers=H(world, "admin"))
     assert openpyxl.load_workbook(io.BytesIO(x.content)).sheetnames == ["Macrocycle", "Mesocycles", "Rules"]
     assert client.get(f"/squads/{world['squad_a']}/seasons/{sid}/sc-season-plan", headers=H(world, "coach_b")).status_code in (403, 404)
+
+
+# ───────────── second reading: ch. 4 methods, ch. 8 power / endurance / injury prevention, ch. 5 details ─────────────
+def test_endurance_is_targeted_last():
+    assert scp.order_targets(SA)[-1] == "endurance"                        # strength first, endurance afterward (ch. 8)
+
+
+def test_complex_kept_for_two_mesocycles_and_methods_named():
+    p = full()
+    acc = [m for m in p["mesocycles"] if m["type"] == "accumulation"]
+    assert acc[0]["new_complex"] and not acc[1]["new_complex"]             # changed every 2 mesocycles (ch. 8)
+    shared = {e["name"] for e in acc[0]["complex"]} & {e["name"] for e in acc[1]["complex"]}
+    assert len(shared) >= 5
+    by = {m["type"]: m for m in p["mesocycles"]}
+    assert "Dynamic effort" in by["transmutation"]["methods"] and "Repeated effort" in by["accumulation"]["methods"]
+    assert any("Maximal-effort method" in r and "not used" in r for r in p["rules"])
+
+
+def test_every_exercise_twice_a_week_and_injury_groups_present():
+    p = full()
+    for m in p["mesocycles"]:
+        if m["type"] in ("accumulation", "transmutation"):
+            week = " | ".join(d["session"] for d in m["microcycle"])
+            for e in m["complex"]:
+                assert week.count(e["name"]) >= 2, (m["label"], e["name"])
+        if m["type"] != "transition":
+            kinds = {e["kind"] for e in m["complex"]}
+            assert "trunk_stability" in kinds or "rotation_power" in kinds, m["label"]
+
+
+def test_tournament_is_one_microcycle():
+    p = scp.build_macrocycle(season={"name": "T", "start_date": date(2026, 11, 26), "end_date": date(2026, 12, 5)},
+                             phases=[{"phase_type": "in_season", "start_date": date(2026, 11, 26), "end_date": date(2026, 12, 5)}],
+                             squad_areas=SA, role_groups=RG, today=date(2026, 11, 15))
+    assert {w["microcycle"] for w in p["weeks"]} == {"Tournament microcycle (10 days)"}

@@ -62,6 +62,7 @@ def build_sc_season_workbook(squad: str, p: dict) -> bytes:
         _s(ws, r, 1, f"{m['label']} - {m['start']:%d %b} to {m['end']:%d %b %Y} ({m['weeks']} week{'s' if m['weeks'] != 1 else ''})", bold=True, fill=FILL[m["type"]])
         r += 1
         for k, v in (("Targets", ", ".join(f"{t['label']} ({t['share']})" for t in m["targets"]) or "-"), ("Retained", ", ".join(m["retained"]) or "-"),
+                     ("Methods", ", ".join(m["methods"]) + (" - new exercise complex" if m["new_complex"] else " - same complex as the last mesocycle")),
                      ("Method", m["method"]), ("Dose", m["dose"]), ("Rest", m["rest"]), ("Frequency", m["frequency"]),
                      ("Session length", m["minutes"] + " min"), ("Workout load", m["intensity"])):
             _s(ws, r, 1, k, bold=True)

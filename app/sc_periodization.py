@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+from .exercise_kinds import PHASE_KINDS
 from .individual_plan import _pick
 from .test_battery import AREA_LABEL
 
@@ -49,36 +50,52 @@ INTENSITY = {"accumulation": "Substantial (24-48 h recovery)", "transmutation": 
 
 METHOD = {
     "accumulation": {
-        "method": "Submaximal and repeated-effort methods: technique first, sets stopped before failure.",
-        "dose": "Weeks 1-6 of training: 1-2 sets x 12-15 reps (bodyweight, bands, broomstick for new lifts). Then 2-3 sets x 8-12 reps.",
-        "rest": "1-2 min between sets", "sessions": 3, "minutes": "45-60",
-        "frequency": "3 sessions a week on non-consecutive days (e.g. Mon, Wed, Fri) - at least 48 h between heavy lower-body work.",
+        "methods": ["Repeated effort", "Submaximal effort"],
+        "method": "Repeated-effort and submaximal-effort methods (ch. 4): sets end close to, never past, the point where technique breaks. "
+                  "For U15 the aim is technique and neural (coordination) strength, not muscle size (ch. 10).",
+        "dose": "First 6-8 weeks of training: 1 set x 12-15 reps on 6-8 exercises (bodyweight, bands, broomstick for new lifts), then 2-3 sets x 8-12 reps "
+                "(no more than 10-12 reps per set for strength, except trunk exercises).",
+        "rest": "1.5-2 min between sets", "sessions": 3, "minutes": "45-60",
+        "frequency": "3 sessions a week on non-consecutive days (Mon, Wed, Fri); each exercise at least twice a week; 48 h or more between heavy leg sessions.",
         "exercises": 8},
     "transmutation": {
-        "method": "More specific work: fast, explosive drills first while fresh (jumps, medicine-ball throws, sprints), then strength 8-10 reps.",
-        "dose": "Power: 3-5 sets x 3-5 fast reps, full recovery. Strength: 2-3 sets x 8-10 reps. Load +5-10% only when all reps are clean.",
-        "rest": "2 min (power: walk-back / full recovery)", "sessions": 3, "minutes": "45-60",
-        "frequency": "2-3 sessions a week, non-consecutive; no heavy legs the day after bowling.",
+        "methods": ["Dynamic effort", "Repeated effort"],
+        "method": "Dynamic-effort method (ch. 4, 8): light loads moved as fast as possible and released - jumps, medicine-ball throws, sprints - to raise the rate of "
+                  "force development that short cricket actions (bowling, hitting, throwing, under 0.3 s) depend on; strength is kept with repeated-effort sets.",
+        "dose": "Explosive: 3 sets x 3-5 reps at maximal speed, fresh, straight after the warm-up. Strength: 2-3 sets x 8-10 reps. Add 5-10% load only when every rep is clean.",
+        "rest": "Explosive 2-3 min (full recovery); strength 1.5-2 min", "sessions": 3, "minutes": "45-60",
+        "frequency": "3 sessions a week, non-consecutive; each exercise at least twice a week; no jumps or heavy legs the day after bowling.",
         "exercises": 8},
     "realization": {
-        "method": "Low load so the earlier work shows (delayed transformation): keep intensity, cut volume - fewer sessions, exercises and sets.",
-        "dose": "2 sets x 6-8 quality reps; power drills 2-3 sets x 3 reps. No new exercises.",
-        "rest": "2 min", "sessions": 2, "minutes": "30-40",
-        "frequency": "2 short sessions a week; the last hard lower-body session 7-10 days before the first match.",
+        "methods": ["Dynamic effort (low volume)"],
+        "method": "Realization (ch. 5): the load drops so the earlier work turns into performance (delayed transformation). Keep the speed and quality, cut the volume - "
+                  "fewer sessions, exercises and sets. A detraining load is acceptable while tapering (ch. 8).",
+        "dose": "Explosive 2-3 sets x 3 reps; strength 2 sets x 6-8 reps. No new exercises.",
+        "rest": "2-3 min", "sessions": 2, "minutes": "30-40",
+        "frequency": "2 short sessions a week; the last hard lower-body session 10-12 days before the first match (ch. 5).",
         "exercises": 5},
     "competition": {
-        "method": "Retaining loads: two short sessions keep strength and power through the season (a short preseason is lost otherwise).",
-        "dose": "2-3 sets x 8-10 reps; power 2 sets x 3 reps. Never to failure.",
-        "rest": "1-2 min", "sessions": 2, "minutes": "25-40",
-        "frequency": "1-2 sessions a week, at least a day apart; never the day before a match; upper body and trunk only the day after bowling.",
+        "methods": ["Retaining load", "Dynamic effort"],
+        "method": "Retaining loads (ch. 5): two short sessions a week keep strength and power through the season - a short preseason is lost within weeks otherwise. "
+                  "Keep some high-resistance work in season (ch. 4) and 2 explosive sessions a week to retain power (ch. 8).",
+        "dose": "Strength 2-3 sets x 8-10 reps at a challenging load; explosive 2 sets x 3 reps. Never to failure.",
+        "rest": "1.5-2 min; explosive 2-3 min", "sessions": 2, "minutes": "25-40",
+        "frequency": "2 sessions a week, at least a day apart; never the day before a match; upper body and trunk only the day after bowling.",
         "exercises": 6},
     "transition": {
-        "method": "Continuous training: minimal loads keep fitness (calisthenics, flexibility, aerobic play, other sports) - never a full stop.",
+        "methods": ["Continuous light training"],
+        "method": "Continuous training (ch. 5): minimal loads keep fitness - calisthenics, flexibility, aerobic play and other sports - never a full stop.",
         "dose": "1-2 sets x 10-15 bodyweight reps; 20-30 min easy aerobic activity.",
         "rest": "as needed", "sessions": 2, "minutes": "30",
         "frequency": "2 light sessions a week.",
         "exercises": 5},
 }
+EXCLUDED = ("Maximal-effort method (1-3 reps near the maximum) is not used: the book does not recommend it for beginners or young athletes because of "
+            "the injury risk (ch. 4, ch. 7).")
+COMPLEX_EVERY = 2                 # change the exercise complex every 2 mesocycles; the dominant method changes every mesocycle (ch. 8)
+# Muscle groups every young athlete trains whatever the sport (ch. 8 injury prevention): trunk, hips, lateral knee/ankle, landing.
+INJURY_SLOTS = [("core", ("trunk_stability",)), ("agility", ("landing", "mobility_balance")), ("power", ("lower_limb_resilience", "landing"))]
+
 SESSION_ORDER = ["Warm-up 5-10 min (jog or skip, activation, mobility)",
                  "Power and speed drills while fresh",
                  "Large multi-joint strength exercises",
@@ -89,6 +106,10 @@ SESSION_ORDER = ["Warm-up 5-10 min (jog or skip, activation, mobility)",
 KIND_ORDER = {"speed": 0, "plyometric_power": 0, "rotation_power": 1, "agility": 1, "repeat_sprint": 2, "leg_strength": 3, "upper_strength": 3,
               "landing": 4, "aerobic": 5, "trunk_stability": 6, "lower_limb_resilience": 7, "shoulder_prehab": 7, "grip_wrist": 7, "mobility_balance": 8}
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+
+def _stem(name: str) -> str:
+    return " ".join(name.lower().replace(",", " ").split()[:2])
 
 
 def _week_kind(d: date, phases: list[dict]) -> str:
@@ -116,10 +137,11 @@ def _blocks(n: int) -> list[int]:
 
 def order_targets(squad_areas: list[dict]) -> list[str]:
     """squad_areas: [{area, priority (players below the middle), median}] -> the areas in the order they are targeted:
-    most needed first, then (ch. 5 superposition) strength-type before endurance within the same need."""
+    strength-type areas by need, endurance last (ch. 5 superposition: strength -> endurance works, the reverse does not)."""
     need = sorted((a for a in squad_areas if a["area"] in SEQUENCE_ORDER), key=lambda a: (-a["priority"], a["median"] if a["median"] is not None else 50))
     top = [a["area"] for a in need]
-    return sorted(top[:4], key=SEQUENCE_ORDER.index) + top[4:]
+    strength = [a for a in top if a != "endurance"]            # "focus first on strength training and afterward on endurance" (ch. 8)
+    return strength + [a for a in top if a == "endurance"]
 
 
 def build_macrocycle(*, season: dict, phases: list[dict], squad_areas: list[dict], role_groups: list[str], today: date,
@@ -200,29 +222,55 @@ def build_macrocycle(*, season: dict, phases: list[dict], squad_areas: list[dict
         if "targets" not in m:
             m["targets"] = order[:2] if m["type"] == "realization" else []
 
-    # exercise complexes: stable within a mesocycle; a new complex at the next block (used_before steers away from repeats)
+    # exercise complexes (ch. 5, 8): one stable complex per mesocycle, the same exercises kept for 2 mesocycles, then a new complex;
+    # the youth injury-prevention groups (trunk, hips / lower limb, landing) are in every complex
     used: dict[str, set] = {}
+    keep_for: dict[str, list] = {}
+    prev_names: set = set()
+    prev_block = 0
     out_mesos, wk_rows = [], []
     num_by_type: dict[str, int] = {}
+    block = 0
     for n, m in enumerate(mesos, 1):
         t, spec = m["type"], METHOD[m["type"]]
         num_by_type[t] = num_by_type.get(t, 0) + 1
         phase = EX_PHASE[t]
-        retained = [a for a in SEQUENCE_ORDER if a not in m["targets"]]
-        plan = [(a, 3 if t in ("accumulation", "transmutation") else 2, True) for a in m["targets"]] + [(a, 1, False) for a in retained]
+        allowed = set(PHASE_KINDS[phase])
+        if n == 1 or (n - 1) % COMPLEX_EVERY == 0 or any(e["kind"] not in allowed for v in keep_for.values() for e in v):
+            block += 1
+            for area, ex in keep_for.items():
+                used[area] = used.get(area, set()) | {e["name"] for e in ex}
+            keep_for = {}
+        # one BASE exercise per area, kept for the whole block (2 mesocycles); a target area adds one more exercise this mesocycle
         complex_, taken = [], set()
-        for area, cnt, target in plan:
+        for area in SEQUENCE_ORDER:
+            if t == "transition" and area not in ("endurance", "core", "agility"):
+                continue
+            target = area in m["targets"]
             med = medians.get(area)
-            ex = _pick(area, phase, role_groups, cnt, priority=target and med is not None, percentile=med if target else None,
-                       ctx={"taken": taken, "seed": f"{t}{n}{area}", "used_before": used.get(area, set())})
-            taken.update(e["name"] for e in ex)
-            used[area] = used.get(area, set()) | {e["name"] for e in ex}
-            complex_ += [{**e, "area": area, "area_label": AREA_LABEL[area], "role": "Target" if target else "Retain"} for e in ex]
+            base = [e for e in keep_for.get(area, []) if e["kind"] in allowed and e["name"] not in taken][:1]
+            if not base:
+                base = _pick(area, phase, role_groups, 1, priority=False, percentile=None,
+                             ctx={"taken": set(taken), "seed": f"{block}{area}", "used_before": used.get(area, set())})
+                keep_for[area] = base
+            taken.update(e["name"] for e in base)
+            complex_ += [{**e, "area": area, "area_label": AREA_LABEL[area], "role": "Target" if target else "Retain"} for e in base]
+            if target and t != "transition":
+                extra = _pick(area, phase, role_groups, 3, priority=med is not None, percentile=med,
+                              ctx={"taken": set(taken), "seed": f"{n}{area}", "used_before": used.get(area, set())})
+                extra = [e for e in extra if _stem(e["name"]) not in {_stem(x) for x in taken}][:1]   # no two versions of one exercise
+                taken.update(e["name"] for e in extra)
+                complex_ += [{**e, "area": area, "area_label": AREA_LABEL[area], "role": "Target"} for e in extra]
         cap = spec["exercises"]
-        tgt = [e for e in complex_ if e["role"] == "Target"][:max(2, cap - 2)]
-        keep = sorted((e for e in complex_ if e["role"] == "Retain"),                 # trunk and injury prevention kept first
-                      key=lambda e: (e["kind"] not in ("trunk_stability", "shoulder_prehab", "lower_limb_resilience", "landing"), KIND_ORDER.get(e["kind"], 9)))
-        complex_ = tgt + keep[:max(0, cap - len(tgt))]
+        if len(complex_) > cap:                                   # realization / competition: fewer exercises, targets and trunk first
+            pri = lambda e: (e["role"] != "Target", e["kind"] not in ("trunk_stability", "lower_limb_resilience", "landing"), KIND_ORDER.get(e["kind"], 9))
+            complex_ = sorted(complex_, key=pri)[:cap]
+        for area, kinds in INJURY_SLOTS:                          # always one trunk and one hip / lower-limb / landing exercise
+            if not any(e["kind"] in kinds for e in complex_) and any(k in allowed for k in kinds):
+                extra = next((e for e in _pick(area, phase, role_groups, 6, ctx={"taken": {x["name"] for x in complex_}, "seed": f"inj{block}"})
+                              if e["kind"] in kinds), None)
+                if extra:
+                    complex_.append({**extra, "area": area, "area_label": AREA_LABEL[area], "role": "Injury prevention"})
         complex_.sort(key=lambda e: KIND_ORDER.get(e["kind"], 9))                    # session order: fast and power first
         wave = WAVES[min(len(m["weeks"]), 6)] if t not in ("competition", "transition", "realization") else (
             [1.0, 0.9, 0.8, 0.7][-len(m["weeks"]):] if t == "realization" else
@@ -236,7 +284,8 @@ def build_macrocycle(*, season: dict, phases: list[dict], squad_areas: list[dict
             sessions = spec["sessions"] if wave[j] > 0.6 or t in ("competition", "transition") else max(1, spec["sessions"] - 1)
             if match_days:
                 sessions = min(sessions, 2 if len(match_days) <= 1 else 1)
-            micro = ("Competition microcycle" if t == "competition" else "Pre-competition" if t == "realization" else
+            days = (e0 - s0).days + 1
+            micro = (f"Tournament microcycle ({days} days)" if t == "competition" and days < 28 else "Competition microcycle" if t == "competition" else "Pre-competition" if t == "realization" else
                      "Active rest" if t == "transition" else MICRO_TYPE.get(wave[j], "Ordinary"))
             wk_rows.append({"week": len(wk_rows) + 1, "start": w["start"], "end": w["end"], "before_season": not w["in_season"],
                             "period": "Preparation (lead-in)" if not w["in_season"] else PERIOD_OF[w["kind"]],
@@ -247,16 +296,21 @@ def build_macrocycle(*, season: dict, phases: list[dict], squad_areas: list[dict
                           "end": weeks[m["weeks"][-1]]["end"], "weeks": len(m["weeks"]),
                           "targets": [{"area": a, "label": AREA_LABEL[a], "share": "35-40% of the work" if t in ("accumulation", "transmutation") else "kept"} for a in m["targets"]],
                           "retained": [AREA_LABEL[a] for a in SEQUENCE_ORDER if a not in m["targets"]],
+                          "methods": spec["methods"], "new_complex": block != prev_block,
                           "method": spec["method"], "dose": spec["dose"], "rest": spec["rest"], "frequency": spec["frequency"],
                           "minutes": spec["minutes"], "intensity": INTENSITY[t], "complex": complex_,
                           "microcycle": microcycle_template(t, spec["sessions"], complex_)})
+        prev_names = {e["name"] for e in complex_}
+        prev_block = block
 
     short = (e0 - s0).days + 1 < 28
     notes = [f"Built on {SOURCE}. Every number is a proposal for the coach.",
              "Volume is relative (100 = the heaviest week); the lightest week is about 60% of the heaviest (rule of 60%). Doses are repetitions and sets "
              "with bodyweight, bands, medicine balls and light loads - never a percentage of a maximal lift (U15).",
              "Each development mesocycle has at most two targets that get about 70-80% of the work; every other ability is kept with retaining loads.",
-             "The exercise complex stays the same through a mesocycle (vary load, not exercises) and changes at the next block."]
+             "The exercise complex stays the same through a mesocycle and is kept for two mesocycles before it changes; the dominant method changes every "
+             "mesocycle and the load follows the rule of 60% (ch. 5, ch. 8).",
+             "Targets: strength-type abilities first, endurance last (ch. 5 superposition; ch. 8 'strength first, endurance afterward')."]
     if short:
         notes.append("Short season (a tournament): there is no time to build fitness inside it, so it is one competition mesocycle with retaining loads; "
                      "the competition microcycle is matched to the tournament. Strength is built before the season.")
@@ -271,6 +325,10 @@ def build_macrocycle(*, season: dict, phases: list[dict], squad_areas: list[dict
 
 
 RULES = [
+    "Methods excluded for U15: " + EXCLUDED,
+    "Every young athlete trains the abdominals, trunk extensors and hip muscles, lateral knee and ankle control, landing (stretch-shortening) drills and "
+    "left-right balance, whatever the sport (ch. 8); a strength difference of 10% or more between the legs is corrected first.",
+    "Prepubescent and early-pubertal players gain strength mainly through the nervous system: coach technique and coordination, not muscle size (ch. 10).",
     "Train as fresh as possible: speed, power and technique work right after the warm-up; never to exhaustion in strength sets.",
     "At least 48 h between heavy lower-body sessions; small muscle groups (calves, forearms) may be trained more often.",
     "Do not repeat the same heavy session on consecutive days - the fatigue of similar workouts adds up.",
@@ -282,21 +340,26 @@ RULES = [
 ]
 
 
+HEAVY_LEGS = {"leg_strength", "plyometric_power", "speed", "repeat_sprint"}       # heavy or maximal-speed leg work: >= 48 h apart
+
+
 def microcycle_template(t: str, sessions: int, complex_: list[dict]) -> list[dict]:
-    """The week: sessions on non-consecutive days, alternating emphasis so consecutive sessions use different muscle groups."""
-    lower = [e["name"] for e in complex_ if e["kind"] in ("speed", "plyometric_power", "leg_strength", "landing", "agility", "repeat_sprint", "lower_limb_resilience")]
-    upper = [e["name"] for e in complex_ if e["kind"] in ("upper_strength", "rotation_power", "trunk_stability", "shoulder_prehab", "grip_wrist")]
-    other = [e["name"] for e in complex_ if e["name"] not in lower + upper]
+    """The week. With 3 sessions every exercise is done twice (ch. 5: each exercise of the complex at least twice a week):
+    leg and explosive work on Mon and Fri (more than 48 h apart), upper body and trunk on Wed and on one of the other days.
+    With 2 sessions the whole complex is done twice, except that the second in-season session has no heavy legs (match week)."""
+    names = lambda xs: ", ".join(e["name"] for e in xs) or "-"
+    legs = [e for e in complex_ if e["kind"] in HEAVY_LEGS]
+    rest = [e for e in complex_ if e["kind"] not in HEAVY_LEGS]
     if t == "transition":
-        slots = {"Tue": "Calisthenics, flexibility and easy aerobic play", "Fri": "Another sport or easy aerobic activity"}
+        slots = {"Tue": "Calisthenics, flexibility and easy aerobic play: " + names(complex_), "Fri": "Another sport or easy aerobic activity"}
     elif sessions >= 3:
-        slots = {"Mon": "A - Power and lower body: " + ", ".join(lower[:4] or other[:3]),
-                 "Wed": "B - Upper body, trunk and conditioning: " + ", ".join((upper[:3] + other[:2]) or lower[-2:]),
-                 "Fri": "C - Whole body, target areas: " + ", ".join((lower[:2] + upper[:2]) or other[:3])}
+        half = (len(rest) + 1) // 2
+        mon, wed, fri = legs + rest[:half], rest, legs + rest[half:]
+        order = lambda xs: sorted(xs, key=lambda e: KIND_ORDER.get(e["kind"], 9))
+        slots = {"Mon": "A - " + names(order(mon)), "Wed": "B - upper body, trunk, conditioning: " + names(order(wed)), "Fri": "C - " + names(order(fri))}
     elif t == "competition":
-        slots = {"Mon": "A - Short whole-body session (25-40 min): " + ", ".join((lower[:2] + upper[:2]) or other[:3]),
-                 "Thu": "B - Upper body, trunk and activation only (no heavy legs 2 days before a match): " + ", ".join(upper[:3] or other[:3])}
+        slots = {"Mon": "A - whole complex, short (25-40 min): " + names(complex_),
+                 "Thu": "B - upper body, trunk, low-volume explosive drills; no heavy legs before the weekend match: " + names(rest + [e for e in legs if e["kind"] in ("speed", "agility")][:1])}
     else:
-        slots = {"Mon": "A - Power and lower body (reduced): " + ", ".join(lower[:3] or other[:3]),
-                 "Thu": "B - Upper body and trunk (reduced): " + ", ".join(upper[:3] or other[:3])}
+        slots = {"Mon": "A - whole complex, reduced: " + names(complex_), "Thu": "B - whole complex, reduced (last hard leg work 10-12 days before the first match): " + names(complex_)}
     return [{"day": d, "session": slots.get(d) or ("Cricket training / rest" if d not in ("Sat", "Sun") else "Match or rest")} for d in DAYS]
