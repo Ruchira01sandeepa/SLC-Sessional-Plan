@@ -654,3 +654,57 @@ def physical_report(squad_id: int, season_id: int, window: str | None = None, db
     db.commit()
     name = re.sub(r"[^A-Za-z0-9]+", "-", f"physical-report-{squad.name}-{d['season']['name']}-{d['window']}").strip("-") or "physical-report"
     return Response(build_physical_report(squad.name, d), media_type=XLSX, headers={"Content-Disposition": f'attachment; filename="{name}.xlsx"'})
+
+
+# ───────────── periodized S&C seasonal plan (Zatsiorsky ch. 5 + youth ch. 10) ─────────────
+from .. import sc_periodization as scp  # noqa: E402
+from ..sc_periodization_excel import build_sc_season_workbook  # noqa: E402
+
+
+def _sc_season(db: Session, user: User, squad_id: int, season_id: int, window: str | None) -> tuple[dict, Squad]:
+    authorize_squad(db, user, squad_id, "testing.read")
+    season = _season(db, squad_id, season_id)
+    squad = db.get(Squad, squad_id)
+    wins = _windows_for(db, squad_id, season_id)
+    window = _window(window) if window else next((w for w in reversed(WINDOWS) if w in wins), "baseline")
+    cats = wins[window][0] if window in wins else {}
+    players = list(db.scalars(select(Player).where(Player.squad_id == squad_id, Player.is_active)))
+    areas: dict[str, list[float]] = {}
+    for c in cats.values():
+        for a in c["areas"]:
+            if a["percentile"] is not None:
+                areas.setdefault(a["area"], []).append(a["percentile"])
+    squad_areas = [{"area": a, "priority": sum(1 for v in vs if v < 50), "median": sorted(vs)[len(vs) // 2]} for a, vs in areas.items()]
+    role_groups: list[str] = []
+    for p in players:
+        for g in groups_for(p.role.value, _bowling(p)):
+            if g not in role_groups:
+                role_groups.append(g)
+    phases, _ = _phases_for(season)
+    today = today_lk()
+    matches = [_local_date(e.start_at) for e in db.scalars(select(CalendarEvent).where(
+        CalendarEvent.squad_id == squad_id, CalendarEvent.event_type == EventType.match,
+        CalendarEvent.start_at >= _utc_naive(min(today, season.start_date), False), CalendarEvent.start_at < _utc_naive(season.end_date, True)))]
+    lead = today if season.start_date > today and (season.start_date - today).days <= 42 else None
+    plan = scp.build_macrocycle(season={"name": season.name, "start_date": season.start_date, "end_date": season.end_date},
+                                phases=phases, squad_areas=squad_areas, role_groups=role_groups or ["fielding"], today=today,
+                                matches=matches, lead_in_from=lead)
+    plan["window"] = window
+    plan["based_on"] = (f"{len(cats)} tested players ({WINDOW_LABEL[window]})" if cats else
+                        "no test results yet: targets use a default order until the squad is tested")
+    return plan, squad
+
+
+@router.get("/squads/{squad_id}/seasons/{season_id}/sc-season-plan")
+def sc_season_plan(squad_id: int, season_id: int, window: str | None = None, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """The squad's periodized S&C plan for the season: macrocycle -> mesocycles -> microcycles, built on Zatsiorsky."""
+    return _sc_season(db, user, squad_id, season_id, window)[0]
+
+
+@router.get("/squads/{squad_id}/seasons/{season_id}/sc-season-plan.xlsx")
+def sc_season_plan_xlsx(squad_id: int, season_id: int, window: str | None = None, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    plan, squad = _sc_season(db, user, squad_id, season_id, window)
+    audit(db, user, "sc_season_plan.exported", "season", season_id)
+    db.commit()
+    name = re.sub(r"[^A-Za-z0-9]+", "-", f"SC-season-plan-{squad.name}-{plan['season']['name']}").strip("-") or "SC-season-plan"
+    return Response(build_sc_season_workbook(squad.name, plan), media_type=XLSX, headers={"Content-Disposition": f'attachment; filename="{name}.xlsx"'})

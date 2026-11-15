@@ -1678,11 +1678,11 @@ async function physicalTab() {
   if (!S.season) return main.replaceChildren(h("h1", {}, "Physical"), h("div", { class: "card" }, "This squad has no season yet. Create one in Admin → Seasons."));
   const sec = S.physSec || "today";
   const d = await api(`/squads/${S.squad.id}/seasons/${S.season.id}/physical${S.physWin ? "?window=" + S.physWin : ""}`);
-  const tabs = h("div", { class: "row cat-tabs", role: "tablist" }, [["today", "Today"], ["dashboard", "Dashboard"], ["groups", "S&C groups"], ["targets", "Targets"], ["progress", "Re-test & progress"], ["growth", "Growth & body"]]
+  const tabs = h("div", { class: "row cat-tabs", role: "tablist" }, [["today", "Today"], ["season", "Season plan"], ["dashboard", "Dashboard"], ["groups", "S&C groups"], ["targets", "Targets"], ["progress", "Re-test & progress"], ["growth", "Growth & body"]]
     .map(([k, t]) => h("button", { class: "small ghost" + (k === sec ? " on" : ""), role: "tab", "aria-selected": k === sec, onclick: () => { S.physSec = k; physicalTab(); } }, t)));
   const winPick = d.windows_with_results.length > 1 ? h("select", { "aria-label": "Test window", onchange: (e) => { S.physWin = e.target.value; physicalTab(); } },
     d.windows_with_results.map((w) => h("option", { value: w, selected: w === d.window }, WINDOWS.find((x) => x[0] === w)[1]))) : null;
-  const body = { today: physToday, dashboard: physDashboard, groups: physGroups, targets: physTargets, progress: physProgress, growth: physGrowth }[sec](d);
+  const body = { today: physToday, season: physSeason, dashboard: physDashboard, groups: physGroups, targets: physTargets, progress: physProgress, growth: physGrowth }[sec](d);
   const report = h("button", { class: "small ghost", onclick: () => downloadFile(`/squads/${S.squad.id}/seasons/${S.season.id}/physical-report.xlsx?window=${d.window}`, "physical-report.xlsx").catch((x) => toast(x.message)) }, "Download report (Excel)");
   main.replaceChildren(h("div", { class: "bar" }, h("h1", {}, "Physical – Strength & Conditioning"), h("div", { class: "row" }, report, winPick, seasonPicker(() => physicalTab()))),
     h("p", { class: "sub" }, `${S.squad.name} · ${d.season.name} · test window: ${d.window_label}` + (d.phase_label ? ` · current phase: ${d.phase_label}` : "")),
@@ -1758,6 +1758,40 @@ function physTargets(d) {
         h("td", {}, `${t.area} (${Charts.num(t.rank, 0)})`), h("td", {}, `${t.test} (${t.unit})`), h("td", {}, t.current), h("td", {}, h("strong", {}, t.target)), h("td", {}, t.latest ?? "–"),
         h("td", {}, t.reached == null ? "–" : h("span", { class: "chip " + (t.reached ? "ok" : "warn") }, t.reached ? "Reached" : "Not yet")))))))),
     none.length ? h("p", { class: "sub" }, "No priority area (nothing below the middle): " + none.join(", ") + ".") : null);
+}
+
+const MESO_CLS = { accumulation: "c-s3", transmutation: "c-s1", realization: "c-s2", competition: "c-good", transition: "c-muted" };
+
+function physSeason() {
+  const host = h("div", {}, h("div", { class: "sub loading" }, "Building the periodized season plan…"));
+  api(`/squads/${S.squad.id}/seasons/${S.season.id}/sc-season-plan`).then((p) => {
+    const wk = p.weeks;
+    const grid = h("div", { class: "scroll" }, h("table", { class: "macro" }, h("tbody", {},
+      [["Week", (w) => w.week], ["Starts", (w) => fdate(String(w.start).slice(0, 10))], ["Period", (w) => w.period], ["Mesocycle", (w) => `${w.mesocycle} · ${w.meso_label}`],
+       ["Microcycle", (w) => w.microcycle], ["Volume %", (w) => w.volume], ["S&C sessions", (w) => w.sessions], ["Matches", (w) => w.matches || ""], ["Targets", (w) => w.targets.join(" + ")]]
+        .map(([k, fn]) => h("tr", {}, h("th", {}, k), wk.map((w) => h("td", { class: ["Period", "Mesocycle", "Microcycle"].includes(k) ? "m-" + w.meso_type : "" }, String(fn(w)))))))));
+    const chart = Charts.columns({ ariaLabel: "Planned S&C volume per week", height: 140, highlight: -1, capAll: true, format: (v) => `${v}%`,
+      data: wk.map((w) => ({ label: `W${w.week}`, value: w.volume, cls: MESO_CLS[w.meso_type], tip: [`Week ${w.week} · ${fdate(String(w.start).slice(0, 10))}`, `${w.meso_label} · ${w.microcycle}`, `Volume ${w.volume}% · ${w.sessions} session(s)`, w.targets.length ? "Targets: " + w.targets.join(", ") : ""] })) });
+    host.replaceChildren(
+      h("div", { class: "card" }, h("div", { class: "bar" }, h("h2", {}, "Periodized S&C season plan"),
+          h("button", { class: "small", onclick: () => downloadFile(`/squads/${S.squad.id}/seasons/${S.season.id}/sc-season-plan.xlsx`, "SC-season-plan.xlsx").catch((x) => toast(x.message)) }, "Download (Excel)")),
+        h("p", { class: "sub" }, `${p.source}. Targets from ${p.based_on}; order of need: ${p.target_order.join(" → ")}.`),
+        h("div", { class: "row legend" }, Object.entries({ accumulation: "Accumulation", transmutation: "Transmutation", realization: "Realization", competition: "Competition", transition: "Transition" })
+          .map(([k, t]) => h("span", { class: "chip m-" + k }, t))),
+        chart, grid),
+      ...p.mesocycles.map((m) => h("details", { class: "card", open: m.number === 1 },
+        h("summary", {}, h("strong", {}, m.label), ` · ${fdate(String(m.start).slice(0, 10))} – ${fdate(String(m.end).slice(0, 10))} · ${m.weeks} week${m.weeks === 1 ? "" : "s"}` +
+          (m.targets.length ? " · targets: " + m.targets.map((t) => t.label).join(" + ") : "")),
+        catTable(["", ""], [["Targets", m.targets.map((t) => `${t.label} (${t.share})`).join(", ") || "–"], ["Retained", m.retained.join(", ") || "–"],
+          ["Method", m.method], ["Dose", m.dose], ["Rest", m.rest], ["Frequency", m.frequency], ["Session length", m.minutes + " min"], ["Workout load", m.intensity]]),
+        h("h4", {}, "Exercise complex (kept the whole mesocycle, in session order)"),
+        catTable(["#", "Exercise", "Area", "Role", "Sets", "Reps / time"], m.complex.map((e, i) => [i + 1, e.name, e.area_label, e.role, e.set || "", e.rep || e.time || ""])),
+        h("h4", {}, "Microcycle (week)"), catTable(["Day", "Session"], m.microcycle.map((d) => [d.day, d.session])))),
+      h("div", { class: "card" }, h("h3", {}, "Session order"), h("ol", {}, p.session_order.map((t) => h("li", {}, t))),
+        h("h3", {}, "Rules"), h("ul", {}, p.rules.map((t) => h("li", {}, t))),
+        h("h3", {}, "Notes"), p.notes.map((n) => h("p", { class: "sub" }, n))));
+  }).catch((x) => host.replaceChildren(h("div", { class: "err" }, x.message)));
+  return host;
 }
 
 function physDashboard(d) {

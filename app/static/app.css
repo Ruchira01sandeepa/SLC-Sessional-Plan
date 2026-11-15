@@ -172,3 +172,7 @@ table.week td{vertical-align:top;min-width:90px}
 .heatmap td.heat.hi{background:color-mix(in srgb,var(--good) 18%,transparent)}.heatmap td.heat.na{color:var(--mute)}
 .tiles{gap:12px;flex-wrap:wrap}.tiles .tile{flex:1 1 160px;margin:0}.tiles .big{font-size:1.6rem;font-weight:700}
 .act{font-weight:700}.act.none,.act.recovery{color:var(--bad)}.act.light,.act.reduced,.act.upper{color:var(--warn)}.act.full{color:var(--good)}
+table.macro th{position:sticky;left:0;background:var(--card);white-space:nowrap}table.macro td{text-align:center;font-size:.8rem;min-width:84px}
+.m-accumulation{background:color-mix(in srgb,#5aa469 22%,transparent)}.m-transmutation{background:color-mix(in srgb,#e3b341 25%,transparent)}
+.m-realization{background:color-mix(in srgb,#e07a5f 25%,transparent)}.m-competition{background:color-mix(in srgb,#4a90d9 22%,transparent)}
+.m-transition{background:color-mix(in srgb,#9aa5b1 25%,transparent)}.legend{gap:6px;margin:6px 0}
