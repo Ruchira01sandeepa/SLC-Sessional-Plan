@@ -16,9 +16,13 @@ from ..exercises import bowling_types
 from ..individual_plan import build_individual_plan
 from ..individual_plan_excel import build_player_workbook
 from ..models import (FitnessPhase, PdpRating, PdpRubricItem, Player, PlayerRole, Screening, Season, SkillTemplate, TestImportBatch,
-                      TestResult, TestSession, User)
+                      TestResult, TestSession, User, WorkloadLog, EventType, MaturityStatus, Squad)
 from .development import latest_role_skills
-from ..permissions import authorize_player, authorize_squad
+from ..permissions import authorize_player, authorize_squad, role_allows
+from ..test_workload import bowling_advice, day_load, training_targets
+from ..age_groups import profile as age_profile
+from ..workload_rules import effective_limits
+from ..workload_service import sync_alerts
 from ..test_battery import BY_KEY, LEVEL_LABEL, TRIALS, WINDOW_LABEL, WINDOWS, display
 from ..test_import import MAX_BYTES, parse_workbook
 from ..test_progress import progress as build_progress
@@ -179,6 +183,7 @@ async def import_results(squad_id: int, request: Request, season_id: int, window
                             uploaded_by=user.id, rows_ok=len(parsed["rows"]), rows_rejected=len({(e["sheet"], e["row"]) for e in parsed["errors"]}))
     db.add(batch)
     db.flush()
+    saved_sessions = []
     for r in parsed["rows"]:
         old = db.scalar(select(TestSession).where(TestSession.player_id == r["player_id"], TestSession.season_id == season_id, TestSession.window == FitnessPhase(window)))
         if old is not None:                                  # re-import of the same window replaces it
@@ -191,9 +196,16 @@ async def import_results(squad_id: int, request: Request, season_id: int, window
             t1, t2, t3 = v["trials"]
             s.results.append(TestResult(test_key=k, trial_1=t1, trial_2=t2, trial_3=t3, final_value=v["final"], setup=v["setup"]))
         db.add(s)
+        saved_sessions.append(s)
+    test_day = {}
+    if role_allows(user, "workload.write"):                       # the test day counts in each player's workload
+        db.flush()
+        for s in saved_sessions:
+            st = log_test_day(db, user, db.get(Player, s.player_id), s)
+            test_day[st] = test_day.get(st, 0) + 1
     audit(db, user, "test_results.imported", "squad", squad_id, f"{len(parsed['rows'])} rows, {batch.rows_rejected} rejected, window {window}")
     db.commit()
-    out.update(saved=True, batch_id=batch.id)
+    out.update(saved=True, batch_id=batch.id, test_day_load=test_day)
     return out
 
 
@@ -330,3 +342,100 @@ def squad_progress(squad_id: int, season_id: int, db: Session = Depends(get_db),
                      "overall_delta": mv["overall_delta"] if mv else None, "tests_compared": pr["tests_compared"],
                      "tests_improved": pr["tests_improved"], "focus_resolved": pr["focus_resolved"], "focus_new": pr["focus_new"]})
     return {"windows_with_results": [w for w in wins], "players": rows}
+
+
+
+# ───────────── workload from the testing record (test-day load, training loads, fast-bowler workload) ─────────────
+TEST_DAY_MARK = "test_battery"            # marks the workload log the system writes for a test day (never a coach's own log)
+
+
+def _results(sess: TestSession) -> dict:
+    return {r.test_key: {"trials": [r.trial_1, r.trial_2, r.trial_3], "final": r.final_value} for r in sess.results if r.final_value is not None}
+
+
+def _test_day_log(db: Session, p: Player, sess: TestSession) -> WorkloadLog | None:
+    return db.scalar(select(WorkloadLog).where(WorkloadLog.player_id == p.id, WorkloadLog.log_date == sess.test_date,
+                                               WorkloadLog.session_type == EventType.fitness_test).order_by(WorkloadLog.id).limit(1))
+
+
+def log_test_day(db: Session, user: User | None, p: Player, sess: TestSession) -> str:
+    """Write (or refresh) the test-day load in the player's workload log. Returns logged / updated / coach_logged / skipped."""
+    if sess.test_date is None or sess.test_date > today_lk():
+        return "skipped"
+    load = day_load(_results(sess))
+    if not load["minutes"]:
+        return "skipped"
+    row = _test_day_log(db, p, sess)
+    if row is not None and row.match_participation != TEST_DAY_MARK:
+        return "coach_logged"                                      # a coach already logged this test day: keep their numbers
+    status = "updated" if row else "logged"
+    if row is None:
+        row = WorkloadLog(player_id=p.id, log_date=sess.test_date, session_type=EventType.fitness_test, attended=True,
+                          recorded_by=user.id if user else None, match_participation=TEST_DAY_MARK)
+        db.add(row)
+    row.duration_min, row.rpe, row.session_intensity = load["minutes"], load["rpe"], 8
+    db.flush()
+    sync_alerts(db, p)
+    return status
+
+
+def _test_workload_rows(db: Session, squad_id: int, season_id: int, window: str) -> list[dict]:
+    squad = db.get(Squad, squad_id)
+    entries, sessions = _cohort_entries(db, squad_id, season_id, window)
+    cats = cz.categorise(entries)
+    players = [p for p in db.scalars(select(Player).where(Player.squad_id == squad_id, Player.is_active).order_by(Player.squad_no, Player.full_name))
+               if p.id in sessions]
+    evals = evaluate_players(db, players, today_lk())
+    defaults = dict(age_profile(squad.age_group).fast_limits)
+    rows = []
+    for p in players:
+        sess = sessions[p.id]
+        res = _results(sess)
+        cat = cats.get(p.id)
+        areas = {a["area"]: a["percentile"] for a in (cat or {}).get("areas", [])}
+        existing = _test_day_log(db, p, sess) if sess.test_date else None
+        logged = None if existing is None else ("system" if existing.match_participation == TEST_DAY_MARK else "coach")
+        rows.append({"player_id": p.id, "player": p.full_name, "role": p.role.value, "squad_no": p.squad_no, "test_date": sess.test_date,
+                     "day_load": day_load(res), "logged": logged,
+                     "logged_load": (existing.rpe or 0) * (existing.duration_min or 0) if existing else None,
+                     "targets": training_targets(res, in_spurt=p.maturity_status == MaturityStatus.circa_phv),
+                     "bowling": bowling_advice(p.role.value, _bowling(p), effective_limits(p.role.value, p.workload_limits, squad.age_group),
+                                               defaults, areas, evals[p.id][1].get("bowling")),
+                     "load_7d": evals[p.id][1].get("acute_load_7d"), "acwr": evals[p.id][1].get("acwr")})
+    return rows
+
+
+@router.get("/squads/{squad_id}/seasons/{season_id}/test-workload")
+def test_workload(squad_id: int, season_id: int, window: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """For every player tested in the window: the test-day load, training loads from the results and (pace bowlers) bowling workload."""
+    authorize_squad(db, user, squad_id, "testing.read")
+    _season(db, squad_id, season_id)
+    window = _window(window)
+    rows = _test_workload_rows(db, squad_id, season_id, window)
+    return {"window": window, "window_label": WINDOW_LABEL[window], "players": rows,
+            "notes": ["Test-day load = session RPE x minutes, the same units as the workload log. Minutes come from the player's own 2 km "
+                      "and plank times and the number of trials done; RPE is a standard estimate for each maximal test.",
+                      "Training loads are taken from each player's own results (pace from the 2 km time, sets from the push-up, "
+                      "inverted-row and plank maximum). Lower volumes in the growth spurt.",
+                      "Pace bowlers: a stricter limit is SUGGESTED when endurance or core is below the middle. It is not applied "
+                      "automatically: set it under the player's bowling limits if the coach agrees.",
+                      "Every number is a proposal for the coach."]}
+
+
+@router.post("/squads/{squad_id}/seasons/{season_id}/test-workload/log")
+def log_test_workload(squad_id: int, season_id: int, window: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Add the test-day load of every tested player to their workload log (refreshes the system's own entries; never
+    changes a test day a coach logged by hand)."""
+    authorize_squad(db, user, squad_id, "testing.write")
+    if not role_allows(user, "workload.write"):
+        raise HTTPException(403, "You cannot write workload logs")
+    _season(db, squad_id, season_id)
+    window = _window(window)
+    _, sessions = _cohort_entries(db, squad_id, season_id, window)
+    counts: dict[str, int] = {}
+    for pid, sess in sessions.items():
+        st = log_test_day(db, user, db.get(Player, pid), sess)
+        counts[st] = counts.get(st, 0) + 1
+    audit(db, user, "test_workload.logged", "season", season_id, ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
+    db.commit()
+    return {"window": window, **{k: counts.get(k, 0) for k in ("logged", "updated", "coach_logged", "skipped")}}
