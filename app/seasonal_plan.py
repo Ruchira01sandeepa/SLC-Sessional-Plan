@@ -423,4 +423,8 @@ def category_view(plan: dict, key: str) -> dict:
 def category_grid(g: dict, key: str) -> dict:
     """The annual-plan grid with only the category's sections (the week, phase and load rows stay)."""
     v = CATEGORY_VIEWS[key]
-    return {**g, "title": g["title"] + f" - {v['label'].upper()}", "sections": [sec for sec in g["sections"] if sec["name"] in v["grid_sections"]]}
+    out = {**g, "title": g["title"] + f" - {v['label'].upper()}", "sections": [sec for sec in g["sections"] if sec["name"] in v["grid_sections"]]}
+    if g.get("daily"):
+        d = g["daily"]
+        out["daily"] = {**d, "title": d["title"] + f" - {v['label'].upper()}", "sections": [sec for sec in d["sections"] if sec["name"] in v["grid_sections"]]}
+    return out

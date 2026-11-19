@@ -57,8 +57,9 @@ def _span(ws, r, a, b, text, fill, white=False):
         ws.merge_cells(start_row=r, start_column=a + 2, end_row=r, end_column=b + 2)
 
 
-def write_header(ws, g: dict, pct_label: str = "Percentage") -> None:
-    """Rows 4 to 10 of the supplied sheets (Periods ... Percentage). The same block heads the annual plan and the load sheet."""
+def write_header(ws, g: dict, pct_label: str = "Percentage", pct_from: str | None = None) -> None:
+    """Rows 4 to 10 of the supplied sheets (Periods ... Percentage). The same block heads the annual plan and the load sheet.
+    pct_from: the sheet whose Percentage row this one shows, by formula, so the two sheets can never disagree."""
     n = g["weeks"]
     ws.column_dimensions["A"].width = 30
     for c in range(2, n + 2):
@@ -74,11 +75,17 @@ def write_header(ws, g: dict, pct_label: str = "Percentage") -> None:
         _span(ws, R_MESO, a, b, name, MONTH_FILL[month], white=MONTH_FILL[month] in DARK)
     for a, b, num in g["macros"]:
         _span(ws, R_MACRO, a, b, num, None)
+    if g.get("micros"):                                         # day-by-day sheet: a micro spans its 7 days
+        for a, b, num in g["micros"]:
+            _span(ws, R_MICRO, a, b, num, None)
     for w in range(n):
         c = w + 2
-        _txt(ws, R_MICRO, c, w + 1, align=CENTER)
-        _txt(ws, R_DATE, c, g["days"][w], align=CENTER)
-        _txt(ws, R_PCT, c, g["percentage"][w], align=CENTER, fmt="0%")
+        if not g.get("micros"):
+            _txt(ws, R_MICRO, c, w + 1, align=CENTER)
+        _txt(ws, R_DATE, c, f"{g['weekdays'][w]} {g['days'][w]}" if g.get("weekdays") else g["days"][w], align=CENTER)
+        _txt(ws, R_PCT, c, f"='{pct_from}'!{L(c)}{R_PCT}" if pct_from else g["percentage"][w], align=CENTER, fmt="0%")
+        if pct_from:
+            ws.cell(row=R_PCT, column=c).data_type = "f"
 
 
 def layout(g: dict) -> tuple[dict[str, int], int, int, int]:
@@ -94,24 +101,32 @@ def layout(g: dict) -> tuple[dict[str, int], int, int, int]:
     return heads, loading, perf, perf + (R_NOTES - R_PERF)
 
 
-def write_annual_sheet(ws, g: dict) -> None:
+def write_annual_sheet(ws, g: dict, notes: bool = True) -> None:
+    if g.get("daily", {}).get("short"):                         # a tournament (season under 4 weeks) is drawn day by day
+        g = g["daily"]                                          # every other season: one column per week, like the supplied sheet
     n = g["weeks"]
     heads, r_loading, r_perf, r_notes = layout(g)
     last = n + 1
     ws.merge_cells(start_row=R_TITLE, start_column=1, end_row=R_TITLE, end_column=last)
     _txt(ws, R_TITLE, 1, g["title"], align=CENTER, bold=True)
     write_header(ws, g)
-    _txt(ws, R_HOURS, 1, "week hours")
+    _txt(ws, R_HOURS, 1, g.get("hours_label", "week hours"))
     for w in range(n):
         _txt(ws, R_HOURS, w + 2, g["hours"][w], align=CENTER, fmt="0.0")
 
     _band(ws, R_COMP, last, "Competition", g["match_weeks"])
+    if g.get("day_kinds") and notes:                            # what kind of tournament day it is (not in the supplied structure)
+        _txt(ws, R_COMP + 1, 1, "Day")
+        for w, k in enumerate(g["day_kinds"]):
+            _txt(ws, R_COMP + 1, w + 2, k, align=Alignment(horizontal="center", vertical="center", wrap_text=True))
+        ws.row_dimensions[R_COMP + 1].height = 30
     _band(ws, R_TEST, last, "Test")
     for r, label in zip((15, 16, 17), ("Medical", "Lab", "Field")):
         _txt(ws, r, 1, label)
+        marks = g.get("medical_days") if label == "Medical" and g.get("medical_days") else g["test_weeks"]
         if label != "Lab":
             for w in range(n):
-                if g["test_weeks"][w]:
+                if marks[w]:
                     _txt(ws, r, w + 2, "*", align=CENTER)
 
     for sec in g["sections"]:
@@ -129,12 +144,24 @@ def write_annual_sheet(ws, g: dict) -> None:
         for w in range(n):
             _txt(ws, r_loading + i, w + 2, g["loading"][name][w], align=CENTER)
     _txt(ws, r_perf, 1, "Performance index")
+    perf = g.get("performance") or ["results" if t else None for t in g["test_weeks"]]   # a player's plan shows their own result
+    for w in range(n):
+        if perf[w]:
+            _txt(ws, r_perf, w + 2, perf[w], align=CENTER)
 
+    if not notes:                                               # the supplied sheet ends at Performance index
+        _finish(ws)
+        return
     _txt(ws, r_notes, 1, "Notes", bold=True)
-    for i, line in enumerate(g["notes"], 1):
+    notes = g["notes"] + ["Performance index: enter each test's results in the test columns (Physical > Re-test & progress keeps them)."]
+    for i, line in enumerate(notes, 1):
         _txt(ws, r_notes + i, 1, line)
     _txt(ws, r_notes + len(g["notes"]) + 2, 1, f"Generated on {g['generated_on'].strftime('%d %b %Y')}. A proposal for the coaches to review.")
 
+    _finish(ws)
+
+
+def _finish(ws) -> None:
     ws.freeze_panes = "B1"
     ws.page_setup.orientation = "landscape"
     ws.page_setup.fitToWidth, ws.page_setup.fitToHeight = 1, 0

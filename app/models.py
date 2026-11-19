@@ -683,3 +683,15 @@ class ScGroupAssignment(Base):
     area: Mapped[str] = mapped_column(String(30))                    # a test area (endurance, power, ...) or "general" (maintenance group)
     set_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     set_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class AthletePlanInput(Base):
+    """STEP 0 of a player's individual seasonal plan: the coach's answers (the plan itself is rebuilt from them on demand)."""
+    __tablename__ = "athlete_plan_inputs"
+    __table_args__ = (UniqueConstraint("season_id", "player_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    season_id: Mapped[int] = mapped_column(ForeignKey("seasons.id", ondelete="CASCADE"), index=True)
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id", ondelete="CASCADE"))
+    answers: Mapped[dict] = mapped_column(JSON)
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)

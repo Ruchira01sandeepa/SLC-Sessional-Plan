@@ -4,7 +4,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from .routers import admin, auth, calendar, development, fitness, meta, plan_versions, players, plans, screening, squads, testing, workload
+from .routers import admin, athlete_plan, auth, calendar, development, fitness, meta, plan_versions, players, plans, screening, squads, testing, workload
 
 app = FastAPI(title="Sri Lanka Cricket Junior (U15 / U17) Player Workload, Development & Seasonal Planning System",
               version="0.1.0")
@@ -21,6 +21,7 @@ app.include_router(workload.router)
 app.include_router(testing.router)
 app.include_router(development.router)
 app.include_router(plan_versions.router)
+app.include_router(athlete_plan.router)
 
 
 BRAND_DIR = Path(__file__).parent / "static" / "brand"

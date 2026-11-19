@@ -9,9 +9,9 @@ from app.annual_grid import COMP, GENERAL, PRECOMP, SEASON_PHASE_OF, SPECIAL, TR
 from app.component_distribution import COLUMNS, build_components
 from app.exercise_kinds import PHASE_KINDS
 from app.exercises import library
-from app.load_distribution import BOWL_OVERS_CAP, MAX_BOWL_DAYS, REPS_MAX, REPS_MIN, SPELL_MAX, build_loads, split_spells
+from app.load_distribution import BOWL_OVERS_CAP, MAX_BOWL_DAYS, REPS_MAX, REPS_MIN, SPELL_MAX, build_interval_loads, build_loads, split_spells
 from app.season_phases import suggest_phases
-from app.seasonal_workbook import build_seasonal_workbook, season_phases_of, session_sheet_name
+from app.seasonal_workbook import SHEETS, build_seasonal_workbook, season_phases_of, session_sheet_name
 from app.session_plans import DOSE, ROLE_LABEL, build_session
 from app.workload_rules import DEFAULT_FAST_LIMITS
 
@@ -164,31 +164,56 @@ def test_bowlers_get_bowling_skill_work_in_season():
 
 # ───────────── workbook ─────────────
 def test_workbook_sheets():
+    """Exactly the supplied workbook: four sheets in its order, one column per week."""
     g = grid()
     wb = openpyxl.load_workbook(io.BytesIO(build_seasonal_workbook(g, ROLES)))
-    names = wb.sheetnames
-    assert names[:3] == ["Annual plan", "Load distribution", "Component distribution"]
-    assert len(names) == 3 + len(ROLES) * 4 and len(set(names)) == len(names) and all(len(n) <= 31 for n in names)
-    assert "Fast Pre-season" in names and "Bat-WK Transition" in names and "All-rounder In-season" in names
-    ws = wb["Fast Pre-comp"]
-    assert ws["A2"].value == "SESSION PLAN FOR FAST BOWLER - PRE-COMPETITION" and "A2:G3" in {str(m) for m in ws.merged_cells.ranges}
-    assert [ws.cell(row=r, column=1).value for r in range(7, 15)] == ["TOPIC", "PERIOD", "STAGE", "MESO", "MICRO", "EQUIPMENT", "DURATION", "TRAINING UNIT"]
-    assert [ws[c].value for c in ("A15", "B15", "C15", "F15", "G15", "C16", "D16", "E16")] == ["PART", "DESCRIPTION", "DOSAGE", "ORGANIZATION", "REST", "TIME", "REP", "SET"]
+    assert wb.sheetnames == SHEETS == ["Annual plan", "Load distribution", "Component distribution", "Session plan"]
+    a = wb["Annual plan"]
+    assert a.max_column == g["weeks"] + 1 and a["A6"].value == "Mesos" and a["A7"].value == "Macros" and a["A60"].value == "Performance index"
+    assert a.max_row == 60                                              # ends at Performance index, as the supplied sheet does
+    ws = wb["Session plan"]
+    assert ws["A2"].value == "SESSION PLAN FOR LOWER BODY" and "A2:G3" in {str(m) for m in ws.merged_cells.ranges}
+    assert [ws.cell(row=r, column=1).value for r in range(7, 15)] == ["TOPIC", "PERIOD", "STAGE", "MESO", "MICRO", "EQUIPMENTS", "DURATION", "TRAINING UNIT"]
+    assert [ws[c].value for c in ("A15", "B15", "C15", "F15", "G15", "C16", "D16", "E16")] == ["PART", "DESCRIPTION", "DOSIFICATION", "ORGANIZATION", "REST", "TIME", "REP", "SET"]
     assert {"C15:E15", "A15:A16", "F15:F16"} <= {str(m) for m in ws.merged_cells.ranges}
-    assert [ws.cell(row=r, column=1).value for r in range(17, 60) if ws.cell(row=r, column=1).value in ("INITIAL PART", "MAIN PART", "FINAL PART")] == ["INITIAL PART", "MAIN PART", "FINAL PART"]
+    col_a = [ws.cell(row=r, column=1).value for r in range(17, ws.max_row + 1)]
+    assert [x for x in col_a if x] == ["INITIAL PART", "MAIN PART", "FINAL PART"]
+    desc = [ws.cell(row=r, column=2).value for r in range(17, ws.max_row + 1)]
+    for x in ("WARM UP", "Stretch", "Neck Stretch(R/L)", "Hypertrophy program", "Back Squat", "MACRO REST 3 MIN", "Crunches", "Left Plank", "WARM DOWN", "Ice bath"):
+        assert x in desc, x
+    assert desc.index("Stretch") < desc.index("Hypertrophy program") < desc.index("Crunches") < desc.index("WARM DOWN")
+    squat = 17 + desc.index("Back Squat")
+    assert [ws.cell(row=squat, column=c).value for c in (4, 5)] == ["12,10,10,8,8", "5"]
     load = wb["Load distribution"]
-    assert load["A10"].value == "Session(Percentage)" and load["A22"].value.startswith("Total meter") and load["B10"].value == 0.25
+    assert [load.cell(row=r, column=1).value for r in (10, 12, 13, 15, 17, 19, 22)] == [
+        "Session(Percentage)", "100m", "Anaerobic endurance(speed)", "Interval run 120m", "Interval run 150m", "Interval run 300m", "Total meter"]
+    assert load.max_column == g["weeks"] + 1 and load["B9"].value == 1                     # week by week
+    assert load["B10"].value == "='Annual plan'!B10"                     # one load row: the two sheets cannot disagree
+    totals = [c for c in load[22][1:] if c.value is not None]
+    assert totals and all(str(c.value).startswith("=N(") for c in totals)  # Total meter is a formula, not a typed sum
+    for c in totals:
+        runs = [load[f"{c.column_letter}{r}"] for r in (15, 17, 19) if load[f"{c.column_letter}{r}"].value is not None]
+        assert runs and all(isinstance(x.value, int) and x.number_format.endswith('m*"0') for x in runs)   # numbers shown as 120m*8
     comp = wb["Component distribution"]
-    assert [comp.cell(row=4, column=c).value for c in range(5, 10)] == ["General preparation", "Special preparation", "Pre-competition", "Competition", "Transition"]
+    assert [comp.cell(row=1, column=c).value for c in range(1, 8)] == ["Quality", "Method", "General", "Special", "Precompetition", "Competition", "Transition"]
+    assert "ComponentDistribution" in comp.tables
+    rows = {r[1]: r for r in comp.iter_rows(min_row=2, values_only=True) if r[1]}
+    assert rows["Continue slow run"][2:] == ("x", None, None, None, "x") and rows["400m interval"][2:] == ("x", "x", "x", None, None)
+    assert rows["Speed games"][2:] == (None,) * 5 and rows["120m"][2:] == ("x", "x", "x", None, None)
 
 
-def test_workbook_uses_only_phases_in_the_season_and_roles_asked():
-    ph = [{"phase_type": "pre_season", "start_date": date(2027, 1, 1), "end_date": date(2027, 3, 31), "focus": None},
-          {"phase_type": "in_season", "start_date": date(2027, 4, 1), "end_date": date(2027, 6, 30), "focus": None}]
-    g = build_grid(squad_name="X", season={"name": "s", "start_date": date(2027, 1, 1), "end_date": date(2027, 6, 30)}, phases=ph, events=[], generated_on=date(2027, 1, 1))
-    assert season_phases_of(g) == ["pre_season", "in_season"]
-    wb = openpyxl.load_workbook(io.BytesIO(build_seasonal_workbook(g, ["spin_bowler", "batter"])))
-    assert wb.sheetnames[3:] == ["Spin Pre-season", "Spin In-season", "Batter Pre-season", "Batter In-season"]
+def test_running_block_follows_the_phases():
+    g = grid()
+    k, n = g["kinds"], g["weeks"]
+    ld = build_interval_loads(g)
+    gen = [w for w in range(n) if k[w] == GENERAL]
+    on = [w for w in range(n) if ld["total"][w]]
+    assert on[0] == gen[-2] and not any(k[w] == TRANS for w in on)                     # last 2 general weeks to competition
+    assert not any(ld["runs"][300][w] for w in range(n) if k[w] == COMP)                 # no 300 m in competition
+    assert ld["speed_100m"][gen[-1]] == 0.80 and max(v or 0 for v in ld["speed_100m"]) == 1.0
+    spec = [ld["total"][w] for w in range(n) if k[w] == SPECIAL]
+    comp = [ld["total"][w] for w in range(n) if k[w] == COMP]
+    assert max(spec) > max(comp)                                                          # volume falls toward competition
 
 
 def test_sheet_names_are_unique_even_when_clashing():
@@ -197,11 +222,17 @@ def test_sheet_names_are_unique_even_when_clashing():
 
 
 def test_exercise_text_is_never_a_formula():
+    import re
     wb = openpyxl.load_workbook(io.BytesIO(build_seasonal_workbook(grid(), ["fast_bowler"])))
+    # the only formulas are the load sheet's own arithmetic (linked % row, total metres), in fixed shapes
+    allowed = {10: r"='Annual plan'!([A-Z]+)10", 22: r"=N\([A-Z]+15\)\*120\+N\([A-Z]+17\)\*150\+N\([A-Z]+19\)\*300"}
     for ws in wb:
         for row in ws.iter_rows():
             for c in row:
                 if isinstance(c.value, str):
+                    if ws.title == "Load distribution" and c.row in allowed and c.column > 1 and c.data_type == "f":
+                        assert re.fullmatch(allowed[c.row], c.value), (c.coordinate, c.value)
+                        continue
                     assert c.data_type == "s", (ws.title, c.coordinate)
 
 
@@ -216,11 +247,9 @@ def test_endpoint_uses_squad_roles(client, world):
     sid = make_season(client, world)
     r = client.get(f"/squads/{world['squad_a']}/seasons/{sid}/seasonal-workbook.xlsx", headers=H(world, "coach_a"))
     assert r.status_code == 200 and "seasonal-plan-workbook-Western-U15-2027.xlsx" in r.headers["content-disposition"]
-    names = openpyxl.load_workbook(io.BytesIO(r.content)).sheetnames
-    assert "Spin Pre-season" in names and "Fast In-season" in names and "Batter Pre-season" not in names      # squad A has a spin and a fast bowler
+    assert openpyxl.load_workbook(io.BytesIO(r.content)).sheetnames == SHEETS
     r = client.get(f"/squads/{world['squad_a']}/seasons/{sid}/seasonal-workbook.xlsx?roles=batter,all_rounder", headers=H(world, "admin"))
-    names = openpyxl.load_workbook(io.BytesIO(r.content)).sheetnames
-    assert "Batter Transition" in names and "All-rounder Pre-comp" in names and "Fast Pre-season" not in names
+    assert r.status_code == 200 and openpyxl.load_workbook(io.BytesIO(r.content)).sheetnames == SHEETS
     assert client.get(f"/squads/{world['squad_a']}/seasons/{sid}/seasonal-workbook.xlsx?roles=captain", headers=H(world, "admin")).status_code == 422
 
 
@@ -246,7 +275,7 @@ def test_endpoint_includes_calendar_matches_and_no_medical_text(client, world, d
         assert client.post(f"/squads/{world['squad_a']}/events", json={"event_type": "match", "title": "Match", "start_at": f"{d}T09:00:00+05:30", "end_at": f"{d}T16:00:00+05:30"}, headers=H(world, "admin")).status_code in (200, 201)
     r = client.get(f"/squads/{world['squad_a']}/seasons/{sid}/seasonal-workbook.xlsx", headers=H(world, "coach_a"))
     wb = openpyxl.load_workbook(io.BytesIO(r.content))
-    w = (date(2027, 6, 12) - date(2027, 1, 1)).days // 7
-    assert wb["Load distribution"].cell(row=26, column=w + 2).value == 2 and wb["Load distribution"].cell(row=27, column=w + 2).value == 1
+    w = (date(2027, 6, 12) - date(2027, 1, 1)).days // 7            # week by week: one column per week
+    assert wb["Annual plan"].cell(row=12, column=w + 2).value == "*"
     text = " ".join(str(c.value) for ws in wb for row in ws.iter_rows() for c in row if c.value is not None)
     assert "SECRET" not in text

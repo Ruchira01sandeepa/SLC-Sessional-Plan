@@ -23,11 +23,11 @@ def admin_only(monkeypatch):
     monkeypatch.setattr(settings, "enabled_roles", "admin")
 
 
-def test_default_setting_is_admin_only():
+def test_default_lets_every_role_sign_in_and_admin_only_still_works():
     from app.config import Settings
     s = Settings(_env_file=None, enabled_roles="admin")
     assert s.role_enabled("admin") and not s.role_enabled("player") and not s.role_enabled("coach")
-    assert Settings.model_fields["enabled_roles"].default == "admin"
+    assert Settings.model_fields["enabled_roles"].default == "all"
 
 
 def test_enabled_roles_validation():

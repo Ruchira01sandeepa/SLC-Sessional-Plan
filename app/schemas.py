@@ -36,7 +36,8 @@ class PasswordChangeIn(BaseModel):
 
 
 # Roles a person may ASK for. Administrator access is never self-service: an admin grants it on approval if needed.
-SIGNUP_ROLES = (UserRole.coach, UserRole.sc_coach, UserRole.physio, UserRole.player)
+# Roles a person can ASK for. Every request (admin included) stays pending until an existing administrator approves it.
+SIGNUP_ROLES = (UserRole.coach, UserRole.sc_coach, UserRole.physio, UserRole.player, UserRole.admin)
 
 
 class SignupIn(BaseModel):
@@ -55,7 +56,7 @@ class SignupIn(BaseModel):
     @classmethod
     def _requestable(cls, v):
         if v not in SIGNUP_ROLES:
-            raise ValueError("Choose coach, S&C coach, physiotherapist or player")
+            raise ValueError("Choose coach, S&C coach, physiotherapist, player or administrator")
         return v
 
     @field_validator("password")

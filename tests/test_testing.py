@@ -354,10 +354,15 @@ def test_formula_text_is_never_executed_or_trusted(client, world, db):
     s = client.get(f"/players/{ids[0]}/testing?season_id={sid}", headers=H(world, "admin")).json()["sessions"][0]
     assert s["notes"] == "=cmd|calc"
     out = client.get(f"/players/{ids[0]}/individual-plan.xlsx?season_id={sid}", headers=H(world, "admin"))
+    import re
+    own = {10: r"='Annual plan'!([A-Z]+)10", 22: r"=N\(([A-Z]+)15\)\*20\+N\(\1(17)\)\*40", 29: r"=SUM\([A-Z]+27:[A-Z]+27\)"}
     for ws in openpyxl.load_workbook(io.BytesIO(out.content)):
         for row in ws.iter_rows():
             for c in row:
                 if isinstance(c.value, str):
+                    if ws.title == "Load distribution" and c.data_type == "f" and c.row in own:   # the sheet's own arithmetic only
+                        assert re.fullmatch(own[c.row], c.value), c.value
+                        continue
                     assert c.data_type == "s"
 
 

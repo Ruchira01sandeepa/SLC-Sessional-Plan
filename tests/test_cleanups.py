@@ -38,6 +38,7 @@ def test_annual_sheet_layout_matches_the_supplied_rows_and_never_overlaps():
     heads, loading, perf, notes = layout(g)
     assert heads == R_SECTION and loading == R_LOADING_HEAD                 # standard content: the supplied sheet's rows exactly
     big = copy.deepcopy(g)
+    big.pop("daily", None)                                                    # check the layout code on the weekly grid itself
     big["sections"][0]["rows"] += [{"label": f"Extra {i}", "marks": [False] * g["weeks"]} for i in range(3)]
     heads2, loading2, _, _ = layout(big)
     order = [s["name"] for s in big["sections"]]

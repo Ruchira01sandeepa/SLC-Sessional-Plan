@@ -187,3 +187,160 @@ def build_session(role: str, phase: str, bowling_types: set[str] | None = None) 
             "Allow 1 to 2 minutes between parts. Fast-bowling volume in this session counts towards the weekly bowling load (see the Load distribution sheet).",
         ] + notes,
     }
+
+
+# ───────────── day-by-day session plans ─────────────
+DAY_TOPIC = {"heavy": "Heavy training day: strength, speed and explosive power while fresh",
+             "medium": "Medium day: endurance, technique and tactics", "light": "Light day: flexibility, tactics and recovery",
+             "practice": "Match practice", "active": "Active rest", "match": "Match day", "free": "Tournament training day: short heavy retaining session",
+             "before": "Day before a match: activation and match preparation", "after": "Recovery day after a match",
+             "between": "Recovery and activation between two matches"}
+MICRO_OF = {"heavy": "Loading", "medium": "Loading", "light": "Recovery", "practice": "Loading", "active": "Transition",
+            "match": "Competition", "free": "Competition", "before": "Competition (pre-match)", "after": "Competition (recovery)",
+            "between": "Competition (recovery)"}
+UPPER_KINDS = {"upper_strength", "trunk_stability", "shoulder_prehab", "grip_wrist"}
+
+
+def _it(desc, time="", rep="", sets="", org="", rest="", kind=None):
+    return {"desc": desc, "time": time, "rep": rep, "set": sets, "org": org, "rest": rest, "kind": kind}
+
+
+def build_day_session(roles: list[str], phase: str, day_kind: str, *, title: str, meso: str, micro: str, pct: float | None,
+                      marks: dict, load: dict, bowling_types: set | None = None) -> dict:
+    """One squad session for one day, laid out like the supplied session plan: the parts depend on the kind of day, the exercises
+    come from the role sessions of the phase (so nothing the phase does not allow), and every role gets its own station."""
+    base = {r: build_session(r, phase, bowling_types) for r in roles}
+    first = base[roles[0]]
+    part_of = lambda ses, name: next((p for p in ses["parts"] if p["name"].startswith(name)), {"items": []})
+    strength = part_of(first, "Strength")["items"] or part_of(first, "Trunk")["items"]
+    power = part_of(first, "Power")["items"]
+    injury = part_of(first, "Injury")["items"]
+    warm = part_of(first, "Warm-up")["items"]
+    cool = part_of(first, "Cool-down")["items"]
+    stations = []
+    for r in roles:
+        for it in part_of(base[r], "Role-specific")["items"][:2]:
+            stations.append({**it, "desc": f"[{ROLE_LABEL[r]}] {it['desc']}"})
+    parts: list[dict] = []
+
+    def add(key, name, minutes, items):
+        if items:
+            parts.append({"key": key, "name": name, "minutes": minutes, "items": items})
+
+    k = day_kind
+    sprint = load.get("sprint_reps")
+    shuttle = load.get("shuttle_reps")
+    aerobic = load.get("aerobic_min")
+    overs = load.get("overs")
+    if k == "match":
+        add("initial", "Match warm-up and activation", 20, [_it("Easy jog and dynamic mobility", "8 min", org="Group"),
+            _it("Strides at 80-90% effort", "", "3-4", "1", rest="walk back"), _it("Skill touches: catching, throwing, shadow batting / bowling run-ups", "8 min", org="Role groups")])
+        add("main", "MATCH", 0, [_it("Match (fluids every drinks break; snack between innings)", "match", org="Team"),
+                                 _it("Fast bowlers: match overs count towards the bowling limits", "", org="Coach records overs")])
+        add("final", "Recovery", 15, [_it("Easy walk and light stretching", "10 min", org="Group"), _it("Fluids and food within 30 minutes", "5 min"),
+                                      _it("Cold water or ice bath if available", "5-10 min", rest="")])
+    elif k in ("after", "between"):
+        add("initial", "Warm-up (easy)", 10, [_it("Easy walk or jog, mobility", "10 min", org="Group")])
+        if k == "after" and marks.get("Strength"):
+            upper = [_item(e, phase, ORG["strength"]) for e in _general_pool(phase) if e["kind"] == "upper_strength"][:2]
+            add("main", "Upper body and trunk (short retaining strength - the legs recover)", 15,
+                upper + [x for x in strength if x["kind"] in UPPER_KINDS and x["desc"] not in {u["desc"] for u in upper}][:2])
+        add("main", "Mobility and injury prevention", 10, injury[:3])
+        add("main", "Easy aerobic recovery", 15, [_it("Easy aerobic (bike, swim or walk-jog), talking pace", f"{aerobic or 15} min")])
+        if k == "between":
+            add("main", "Activation for tomorrow's match", 5, [_it("2-3 fast drills (quick feet, short strides)", "5 min", "2-3", "1", rest="full")])
+        add("final", "Cool-down", 10, [_it("Stretching", "5 min"), _it("Cold water or ice bath if available", "5 min")])
+    elif k == "before":
+        add("initial", "Warm-up", 10, warm)
+        add("main", "Speed (short, fresh, no heavy work)", 10, [_it(f"Sprint {20} m at about 90% effort", "", str(min(sprint or 3, 3)), "1", "Small groups", "full recovery, walk back")]
+            + [x for x in power if x["kind"] in ("speed", "agility")][:1])
+        add("main", "Match preparation (role stations)", 20, stations)
+        add("main", "Mobility", 5, [x for x in injury if x["kind"] in ("mobility_balance", "shoulder_prehab")][:2])
+        add("final", "Cool-down", 5, cool)
+    elif k == "practice":
+        add("initial", "Warm-up", 15, warm)
+        add("main", "Match practice / match simulation", 60, [_it("Practice match or centre-wicket simulation with match rules", "60 min", org="Two teams")]
+            + ([_it(f"Bowlers: {overs} overs in spells", "", "", "", "Coach records overs")] if overs else []))
+        add("final", "Cool-down", 10, cool)
+    elif k == "active":
+        add("initial", "Warm-up", 5, warm[:2])
+        add("main", "Easy aerobic or another sport", 25, [_it("Easy aerobic play, swimming or another sport", f"{aerobic or 20} min", org="Group")])
+        add("main", "Trunk and mobility", 15, strength[:3] + injury[:2])
+        add("final", "Cool-down", 5, cool)
+    else:                                                        # heavy, medium, light, free
+        add("initial", "Warm-up", 10, warm)
+        if marks.get("Strength"):
+            add("main", "Strength" + (" (short heavy retaining, 25-40 min in total)" if k == "free" else ""), 15, strength[:4 if k == "free" else 5])
+        if marks.get("Speed") or marks.get("Explosive power"):
+            items = power[:3]
+            if sprint:
+                items = [_it(f"Sprint 20 m at {int(round((load.get('effort') or 0.85) * 100))}% effort", "", str(sprint), "1", "Small groups",
+                             "full recovery, walk back")] + [x for x in items if x["kind"] != "speed"][:2]
+            add("main", "Speed and explosive power", 10, items)
+        if marks.get("Endurance") or shuttle:
+            items = []
+            if aerobic:
+                items.append(_it("Easy aerobic run, talking pace", f"{aerobic} min", org="Group"))
+            if shuttle:
+                items.append(_it("Shuttle runs 20 m", "", str(shuttle), "2", "Pairs", "2 min between sets"))
+            add("main", "Endurance", 15 if aerobic else 10, items)
+        if k in ("medium", "free", "heavy"):
+            add("main", "Role stations (technique)" + (f" - bowlers {overs} overs" if overs else ""), 20 if k == "medium" else 15, stations)
+        if k == "light":
+            add("main", "Flexibility and mobility", 15, [x for x in injury if x["kind"] == "mobility_balance"][:2]
+                + [_it("Stretching: hips, hamstrings, thoracic spine, shoulders", "10 min", org="Group")])
+            add("main", "Tactics and analysis", 15, [_it("Video or tactical session (field placings, match plans)", "15 min", org="Squad")])
+        add("main", "Injury prevention", 5, injury[:3])
+        add("final", "Cool-down", 5, cool)
+    total = sum(p["minutes"] for p in parts)
+    rpe = {"heavy": "6 to 7", "medium": "5 to 6", "light": "3 to 4", "practice": "6 to 7", "active": "2 to 3", "match": "match",
+           "free": "6", "before": "3 to 4", "after": "2 to 3", "between": "2 to 3"}[k]
+    return {
+        "title": f"SESSION PLAN - {title.upper()}",
+        "header": [("TOPIC", f"{title}: {DAY_TOPIC[k]}"), ("PERIOD", PERIOD[phase]), ("STAGE", STAGE[phase]), ("MESO", meso),
+                   ("MICRO", f"{micro} - {MICRO_OF[k]}"), ("EQUIPMENT", "; ".join(sorted({EQUIPMENT[r] for r in roles}))[:300]),
+                   ("DURATION", f"{total} min" if k != "match" else "Match + 35 min"),
+                   ("TRAINING UNIT", (f"{int(round(pct * 100))}% of the maximum planned load. " if pct else "") + f"RPE {rpe} of 10. "
+                    "Body weight, bands, medicine balls and light loads - never a % of a maximal lift (U15).")],
+        "parts": parts, "minutes": total,
+        "notes": ["Rest 1 minute between exercises unless the REST column says otherwise; strength exercises slow to moderate pace, 2 s down 2 s up.",
+                  "Role stations: each role does its own drills in the same time block, then the groups rotate.",
+                  "A proposal for the coaches: adjust for each player; stop and refer to the physiotherapist if there is pain."],
+    }
+
+
+# ───────────── the supplied "Session plan" sheet, as it is (Monday lower-body session, general preparation) ─────────────
+_STRETCHES = ["Supine Lower Back Stretches", "Foot Behind Knee Lower Back", "Rocking", "Seated gluteus Stretch", "Supine knee to Chest",
+              "Walking knee to Chest", "Calf Walk", "Lying knee flexion", "Soleus Stretch", "Standing Leg Swing", "Walking Hamstring Walk",
+              "Standing Groin Stretch", "Supine Hamstring Stretch", "Overhead squat", "Lateral Arm Chest", "Vertical Arm Raises",
+              "Arm Rotation", "Neck Stretch(R/L)"]
+_HYPERTROPHY = [("Back Squat", "12,10,10,8,8", 5), ("Incline Leg Press", "12,10,10,8,8", 5), ("Leg Extension", "12,10,10,8", 4),
+                ("Weighted Lunges", "12,12,12", 3), ("Lying Hamstring Curl", "12,10,10,8", 4), ("Standing Hamstring Curl", "12,10,10", 3),
+                ("Standing Calf Raises", "12,10,10,8", 4)]
+_CORE = [("Hanging Leg Raises", "", "12", 3), ("Star plank", "", "12", 3), ("Hollow hold", "", "20s", 3), ("Land mine Rotation", "", "12", 3),
+         ("Plank", "", "1min", 1), ("Right Plank", "", "1min", 1), ("Left Plank", "", "1min", 1)]
+
+
+def classic_session(*, period: str = "Preparatory", stage: str = "General Preparatory", meso: str = "Introduction",
+                    micro: str = "ORDINARY") -> dict:
+    """The session plan sheet of the supplied workbook: header, then initial / main / final parts with time, rep, set,
+    organization and rest."""
+    stretch = [_it(s, "20s", "8", "1", rest="MICRO REST - 2 SEC" if i == 0 else "") for i, s in enumerate(_STRETCHES)]
+    parts = [
+        {"key": "initial", "name": "WARM UP", "minutes": 20, "items": [_it("Light jogging", "12min")]},
+        {"key": "main", "name": "Stretch", "minutes": None, "items": [{**stretch[0], "org": "circle warm up"}] + stretch[1:]},
+        {"key": "main", "name": "Rest 1 minutes for all other exercises perform exercises at a slow to moderate pace 2-4s up, 2-4 down",
+         "minutes": None, "items": []},
+        {"key": "main", "name": "Hypertrophy program", "minutes": None,
+         "items": [_it(e, "", reps, str(s), rest="MICRO REST - 30 SEC" if i == 0 else "") for i, (e, reps, s) in enumerate(_HYPERTROPHY)]},
+        {"key": "main", "name": "MACRO REST 3 MIN", "minutes": None, "items": []},
+        {"key": "main", "name": "Crunches", "minutes": None, "items": [_it(e, t, r, str(s)) for e, t, r, s in _CORE]},
+        {"key": "final", "name": "WARM DOWN", "minutes": 20, "items": [_it("Slow walk"), _it("Stretch"), _it("Ice bath")]},
+    ]
+    return {
+        "title": "SESSION PLAN FOR LOWER BODY",
+        "header": [("TOPIC", "Monday session plan"), ("PERIOD", period), ("STAGE", stage), ("MESO", meso), ("MICRO", micro),
+                   ("EQUIPMENTS", "SKIPPING,BOX,STOP WATCH,WHISTLE,MINI CONES,RACKETS,BALLS"), ("DURATION", "1h 40min"),
+                   ("TRAINING UNIT", "60-85% of the maximum weight")],
+        "parts": parts, "minutes": 100, "notes": [],
+    }

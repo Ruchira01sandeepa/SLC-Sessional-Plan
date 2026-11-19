@@ -54,9 +54,9 @@ class Settings(BaseSettings):
     max_failed_logins: int = 5
     lockout_minutes: int = 15
 
-    # Which roles may sign in. The app is ADMIN-ONLY for now. To open it up later set e.g.
-    #   SLC_ENABLED_ROLES=all            or    SLC_ENABLED_ROLES=admin,coach,physio
-    enabled_roles: str = "admin"
+    # Which roles may sign in. Every role by default (each account is still approved by an administrator first).
+    # To limit it set e.g.  SLC_ENABLED_ROLES=admin   or   SLC_ENABLED_ROLES=admin,coach,physio
+    enabled_roles: str = "all"
 
     @field_validator("enabled_roles")
     @classmethod

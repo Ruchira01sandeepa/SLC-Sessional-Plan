@@ -98,8 +98,28 @@ def test_percentage_ramps_dips_and_stays_below_peak():
 def test_loading_index_follows_phase():
     g = grid()
     for w, k in enumerate(g["kinds"]):
-        assert (g["loading"]["Volume"][w], g["loading"]["Intensity"][w], g["loading"]["Load"][w]) == LOADING[k]
-    assert LOADING[GENERAL] == ("High", "low", "High") and LOADING[COMP] == ("low", "High", "low")
+        assert (g["loading"]["Volume"][w], g["loading"]["Intensity"][w]) == LOADING[k]
+        p = g["percentage"][w]                                                         # Load never contradicts the % row
+        assert g["loading"]["Load"][w] == ("High" if p >= 0.75 else "Medium" if p >= 0.5 else "low")
+    assert LOADING[GENERAL] == ("High", "low") and LOADING[SPECIAL] == ("High", "Medium") and LOADING[COMP] == ("low", "High")
+    peak = g["percentage"].index(max(g["percentage"]))
+    assert g["loading"]["Load"][peak] == "High"
+    d = g["daily"]
+    assert all(d["loading"]["Load"][i] == ("" if not p else "High" if p >= 0.75 else "Medium" if p >= 0.5 else "low")
+               for i, p in enumerate(d["percentage"]))
+
+
+def test_nutrition_marks_the_emphasis_not_every_week():
+    g = grid()
+    k, pct = g["kinds"], g["percentage"]
+    carb, fat = row(g, "Nutrition", "Carbohydrate"), row(g, "Nutrition", "Fat")
+    assert not all(carb) and all(carb[w] for w in range(g["weeks"]) if k[w] in (PRECOMP, COMP) or pct[w] >= 0.6)
+    assert all(fat[w] == (k[w] in (GENERAL, TRANS, COMP)) for w in range(g["weeks"]))          # competition: on recovery days (daily grid)
+    d = g["daily"]
+    dfat = next(r for s in d["sections"] if s["name"] == "Nutrition" for r in s["rows"] if r["label"] == "Fat")["marks"]
+    assert not any(dfat[i] for i, x in enumerate(d["day_kind_keys"]) if x in ("match", "before"))   # never on a match day or the day before
+    assert row(g, "Nutrition", "Protein") == [s or k[w] == TRANS for w, s in enumerate(row(g, "Physical", "Strength"))]
+    assert all(row(g, "Nutrition", "Vitamin")) and any("EMPHASISED" in x for x in g["notes"])
 
 
 # ───────────── marks and calendar ─────────────
@@ -116,7 +136,7 @@ def test_marks_follow_phases():
     assert not any(row(g, "Physical", "Speed")[w] for w in range(g["weeks"]) if k[w] in (GENERAL, SPECIAL, TRANS))
     assert not any(row(g, "Technical", "Explosive power")[w] for w in range(g["weeks"]) if k[w] in (GENERAL, SPECIAL, TRANS))
     assert not any(row(g, "Technical", "Anaerobic endurance")[w] for w in range(g["weeks"]) if k[w] != PRECOMP)
-    assert all(row(g, "Nutrition", "Protein")) and all(row(g, "Physical", "Flexibility"))
+    assert all(row(g, "Nutrition", "Minerals")) and all(row(g, "Physical", "Flexibility"))
     st = row(g, "Physical", "Strength")
     assert not any(st[w] for w in range(g["weeks"]) if g["recovery_weeks"][w] and k[w] in (GENERAL, SPECIAL))
     goal = row(g, "Mental", "Goal setting")
@@ -159,6 +179,9 @@ def test_suggested_tests_when_calendar_has_none():
     idx = [i for i, t in enumerate(g["test_weeks"]) if t]
     assert g["tests_source"] == "suggested" and idx[0] == 0 and idx[-1] == g["weeks"] - 1 and len(idx) == 3
     assert any("SUGGESTED" in n for n in g["notes"])
+    d = g["daily"]                                                     # the day-by-day sheet shows them too, one fresh day per test week
+    days = [i for i, t in enumerate(d["test_weeks"]) if t]
+    assert [d["week_of_day"][i] for i in days] == idx and all(d["day_kind_keys"][i] not in ("rest", "match", "before") for i in days)
 
 
 # ───────────── API and Excel ─────────────
@@ -190,17 +213,18 @@ def test_workbook_layout_matches_the_supplied_sheet(client, world):
               59: "Load", 60: "Performance index"}
     for row_no, text in labels.items():
         assert ws.cell(row=row_no, column=1).value == text, row_no
-    assert ws["A2"].value.startswith("ANNUAL PLAN FOR WESTERN U15") and "A2:AN2" in {str(m) for m in ws.merged_cells.ranges}   # 39 weeks end at column AN, like the sheet
+    last = 39 + 1                                                    # week by week, like the supplied sheet: 39 weeks end at AN
+    assert ws["A2"].value.startswith("ANNUAL PLAN FOR WESTERN U15") and "A2:AN2" in {str(m) for m in ws.merged_cells.ranges}
     assert ws["B4"].value == "Preparation" and ws["B5"].value == "General preparation" and ws["B6"].value == "January"
     assert [ws.cell(row=8, column=c).value for c in (2, 3, 40)] == [1, 2, 39]
     assert [ws.cell(row=9, column=c).value for c in (2, 3, 4, 5, 6, 7)] == [1, 8, 15, 22, 29, 5]
     assert ws["B10"].value == 0.25 and ws["B10"].number_format == "0%"
     for r_ in (12, 14, 19, 26, 34, 42, 47):
         assert ws.cell(row=r_, column=3).fill.fgColor.rgb.endswith("002060"), r_
-    assert ws["B57"].value == "High" and ws["B58"].value == "low" and ws["B59"].value == "High"
-    assert ws["AN57"].value == "low"
-    assert ws["B20"].value == "*" and ws["B48"].value == "*"
-    assert ws["B15"].value == "*" and ws["B16"].value is None                                                       # medical and field in test weeks; lab empty
+    assert ws["B57"].value == "High" and ws["B58"].value == "low" and ws["AN57"].value == "low"
+    assert ws["B20"].value == "*" and ws["B15"].value == "*" and ws["B16"].value is None           # medical and field in test weeks; lab empty
+    assert ws["B49"].value == "*" and ws["B48"].value is None              # week 1 (25%): fat for growth emphasised, extra carbohydrate not yet
+    assert ws["B60"].value == "results"                                     # Performance index: results go in the test weeks
     assert any("proposal" in str(c.value).lower() for c in ws["A"])
 
 
@@ -221,7 +245,9 @@ def test_workbook_uses_calendar_and_phases(client, world):
     assert not any("SUGGESTED split" in n for n in g["notes"])
     _, wb = xlsx(client, world, sid)
     ws = wb.active
-    assert ws.cell(row=12, column=w + 2).value == "*" and ws.cell(row=11, column=w + 2).value == 7.0
+    assert ws.cell(row=12, column=w + 2).value == "*" and ws.cell(row=11, column=w + 2).value == 7.0   # one column per week
+    t = (date(2027, 7, 3) - date(2027, 1, 1)).days // 7
+    assert ws.cell(row=15, column=t + 2).value == "*"
 
 
 def test_no_phases_uses_suggestion_and_says_so(client, world):
@@ -284,3 +310,25 @@ def test_no_medical_text_in_grid(client, world, db):
     text = " ".join(str(c.value) for row in wb.active.iter_rows() for c in row if c.value is not None)
     assert "SECRET" not in text
     assert "SECRET" not in client.get(f"/squads/{world['squad_a']}/seasons/{sid}/annual-plan", headers=H(world, "coach_a")).text
+
+
+def test_tournament_sheet_is_day_by_day():
+    """A season under 4 weeks is drawn with one column per day; the days follow the match days in the calendar."""
+    from app.annual_grid_excel import build_grid_workbook
+    s, e = date(2026, 11, 26), date(2026, 12, 5)
+    matches = [date(2026, 11, 27), date(2026, 11, 30), date(2026, 12, 3)]
+    g = build_grid(squad_name="Galle U15", season={"name": "T", "start_date": s, "end_date": e}, phases=suggest_phases(s, e),
+                   events=[{"event_type": "match", "date": d, "hours": 6} for d in matches], generated_on=s)
+    assert g["weeks"] == 2                                            # the weekly grid stays for the plans built on it
+    d = g["daily"]
+    assert d["weeks"] == 10 and d["days"][0] == 26 and d["days"][-1] == 5 and not d["assumed_matches"]
+    assert [i for i, m in enumerate(d["match_weeks"]) if m] == [1, 4, 7]
+    assert d["percentage"][1] == 0.5 and d["percentage"][0] == 0.3               # match day vs day before (rule of 60%)
+    strength = next(r for r in d["sections"][0]["rows"] if r["label"] == "Strength")["marks"]
+    assert not strength[0] and not strength[1] and strength[2]                    # never before or on a match day; the day after
+    assert d["hours"][1] == 6
+    ws = openpyxl.load_workbook(io.BytesIO(build_grid_workbook(g))).active
+    assert ws["B9"].value == "Thu 26" and ws["K9"].value == "Sat 5" and ws["A11"].value == "day hours"
+    assert ws["C12"].value == "*" and ws["C13"].value == "Match"
+    long = grid()
+    assert long["weeks"] == 39 and long["daily"]["weeks"] == 273         # every season is drawn day by day too

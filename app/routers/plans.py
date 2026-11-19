@@ -266,3 +266,57 @@ def download_seasonal_workbook(squad_id: int, season_id: int, roles: str | None 
     db.commit()
     return Response(build_seasonal_workbook(g, player_roles, bowling or None), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": f'attachment; filename="{name}.xlsx"'})
+
+
+# ───────────── players' own seasonal plans, in the supplied workbook's structure ─────────────
+def _latest_areas(db: Session, squad_id: int, season_id: int) -> dict[int, list[dict]]:
+    """{player id: [{area, label, percentile}]} from the latest test window with results this season (empty if untested)."""
+    from .testing import _windows_for
+    wins = _windows_for(db, squad_id, season_id)
+    if not wins:
+        return {}
+    cats = wins[list(wins)[-1]][0]
+    return {pid: [{"area": a["area"], "label": a["label"], "percentile": a["percentile"]} for a in c["areas"]] for pid, c in cats.items()}
+
+
+def _personal(g: dict, p: Player, areas: dict[int, list[dict]]) -> dict:
+    from ..player_season_plan import personal_grid
+    from ..session_plans import ROLE_LABEL
+    return personal_grid(g, name=p.full_name, role=ROLE_LABEL.get(p.role.value, p.role.value), areas=areas.get(p.id, []))
+
+
+def _xlsx(data: bytes, name: str) -> Response:
+    name = re.sub(r"[^A-Za-z0-9]+", "-", name).strip("-") or "seasonal-plan"
+    return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="{name}.xlsx"'})
+
+
+@router.get("/squads/{squad_id}/seasons/{season_id}/player-plans.xlsx")
+def download_player_plans(squad_id: int, season_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Every active player's seasonal plan in ONE Excel: one Annual-plan sheet per player (built from their own test ranks),
+    then the squad's Load distribution, Component distribution and Session plan."""
+    from ..seasonal_workbook import build_players_workbook, player_sheet_name
+    authorize_squad(db, user, squad_id, "testing.read")
+    g = _grid(db, user, squad_id, season_id)
+    areas = _latest_areas(db, squad_id, season_id)
+    players = db.scalars(select(Player).where(Player.squad_id == squad_id, Player.is_active)
+                         .order_by(Player.squad_no.is_(None), Player.squad_no, Player.full_name)).all()
+    used = {"Load distribution", "Component distribution", "Session plan"}
+    sheets = [(player_sheet_name(p.full_name, p.squad_no, used), _personal(g, p, areas)) for p in players]
+    audit(db, user, "player_plans.exported", "season", season_id, f"{len(players)} players")
+    db.commit()
+    return _xlsx(build_players_workbook(g, sheets), f"Seasonal-plans-all-players-{g['squad']}-{g['season']}")
+
+
+@router.get("/squads/{squad_id}/seasons/{season_id}/player-plans/{player_id}.xlsx")
+def download_player_plan(squad_id: int, season_id: int, player_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """One player's seasonal plan: Annual plan (their own) | Load distribution | Component distribution | Session plan."""
+    authorize_squad(db, user, squad_id, "testing.read")
+    p = db.get(Player, player_id)
+    if p is None or p.squad_id != squad_id:
+        raise HTTPException(404, "Player not found in this squad")
+    g = _grid(db, user, squad_id, season_id)
+    pg = _personal(g, p, _latest_areas(db, squad_id, season_id))
+    audit(db, user, "player_plan.exported", "player", p.id)
+    db.commit()
+    return _xlsx(build_seasonal_workbook(pg), f"Seasonal-plan-{p.full_name}-{g['season']}")

@@ -19,7 +19,17 @@ def test_config_is_public(client):
     r = client.get("/auth/config")
     assert r.status_code == 200
     body = r.json()
-    assert body["signup_enabled"] is True and "admin" not in body["signup_roles"]
+    assert body["signup_enabled"] is True and "admin" in body["signup_roles"]
+
+
+def test_admin_request_is_pending_until_an_admin_approves_it(client, db):
+    r = client.post("/auth/signup", json={"full_name": "New Admin", "email": "newadmin@slc.lk", "role": "admin",
+                                          "password": "Str0ngPassword!", "note": "Provincial manager"})
+    assert r.status_code == 202
+    u = db.query(User).filter_by(email="newadmin@slc.lk").one()
+    assert u.role == UserRole.admin and u.approval_status == ApprovalStatus.pending
+    r = client.post("/auth/login", json={"email": "newadmin@slc.lk", "password": "Str0ngPassword!"})
+    assert r.status_code == 403 and "access_token" not in r.json()                  # no access until approved
 
 
 def test_signup_creates_pending_account_that_cannot_sign_in(client, db):
@@ -49,7 +59,7 @@ def test_duplicate_email_gets_the_same_answer_and_changes_nothing(client, db):
 
 
 def test_signup_validation(client):
-    assert _signup(client, role="admin").status_code == 422             # admin access is never self-service
+    assert _signup(client, role="superuser").status_code == 422         # only the listed roles (admin is requested, then approved)
     assert _signup(client, password="weakpassword").status_code == 422
     assert _signup(client, full_name=" ").status_code == 422
     assert _signup(client, email="not-an-email").status_code == 422

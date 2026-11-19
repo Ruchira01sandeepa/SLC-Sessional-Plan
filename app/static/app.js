@@ -272,8 +272,10 @@ function signUpForm(cfg) {
   const roleHint = h("div", { class: "hint", hidden: true });
   role.addEventListener("change", () => {
     const off = role.value && !cfg.enabled_roles.includes(role.value);
-    roleHint.hidden = !off;
-    roleHint.textContent = off ? `${SIGNUP_ROLE_LABEL[role.value]} sign-in is not open yet.` : "";
+    const admin = role.value === "admin";
+    roleHint.hidden = !off && !admin;
+    roleHint.textContent = off ? `${SIGNUP_ROLE_LABEL[role.value]} sign-in is not open yet.`
+      : admin ? "Administrator requests are checked by the current administrator. Say who you are in the note below." : "";
   });
   const note = h("textarea", { maxLength: 300, rows: 2, placeholder: "e.g. Head coach, Western Province U17" });
   const pw = pwField("Password", "new-password");
@@ -368,6 +370,7 @@ function drawTabs() {
 }
 
 function go(tab) {
+  if (tab !== "physical") S.athletePid = null;
   S.tab = tab; drawTabs();
   Charts.hide();
   document.body.classList.toggle("wide", tab === "overview");
@@ -814,7 +817,8 @@ async function adminTab() {
   const [users, squads, requests] = await Promise.all([api("/admin/users"), api("/admin/squads"), api("/admin/signup-requests")]);
   const staffLists = await Promise.all(squads.map((s) => api(`/admin/squads/${s.id}/staff`)));
   $("#main").replaceChildren(h("h1", {}, "Admin"),
-    h("p", { class: "sub" }, "Only administrators can sign in for now. Other staff can still be added for planning."),
+    AUTH_CFG && AUTH_CFG.enabled_roles && AUTH_CFG.enabled_roles.length < 5
+      ? h("p", { class: "sub" }, "Only some roles can sign in at the moment (SLC_ENABLED_ROLES). Other staff can still be added for planning.") : null,
     requests.length ? requestsCard(requests) : null, squadsCard(squads, staffLists, users), seasonsCard(), usersCard(users));
 }
 
@@ -834,7 +838,8 @@ function requestsCard(requests) {
         r.signup_note ? h("p", { class: "quote" }, r.signup_note) : null,
         r.role_can_sign_in ? null : h("p", { class: "hint warn" }, "This role cannot sign in yet (SLC_ENABLED_ROLES)."), e2),
       h("div", { class: "row" }, role,
-        h("button", { class: "small", onclick: () => act("approve", { role: role.value }, `${r.full_name} approved`)() }, "Approve"),
+        h("button", { class: "small", onclick: () => (role.value !== "admin" || confirm(`Make ${r.full_name} an ADMINISTRATOR? They will have full access, including approving other people.`))
+          && act("approve", { role: role.value }, `${r.full_name} approved`)() }, "Approve"),
         h("button", { class: "small ghost danger", onclick: () => confirm(`Reject the request from ${r.full_name}?`) && act("reject", null, "Request rejected")() }, "Reject")));
   });
   return h("div", { class: "card attention" }, h("h2", {}, `Access requests (${requests.length})`),
@@ -973,6 +978,17 @@ function planRow(row) {
     h("p", { class: "goal" }, row.goal), kv("Planned activities", row.planned_activities), kv("Responsible", row.responsible), kv("Measurement", row.measurement_method), kv("Target", row.target_outcome), tracker);
 }
 
+/** A player's seasonal plan (Annual plan · Load · Components · Session), built from their own test results. */
+function playerPlanButton(squadId, pid, cls = "small") {
+  return h("button", { class: cls, onclick: () => (S.season ? downloadFile(`/squads/${squadId}/seasons/${S.season.id}/player-plans/${pid}.xlsx`, "Seasonal-plan.xlsx")
+    : Promise.reject(new Error("Choose a season first"))).catch((x) => toast(x.message)) }, "Download seasonal plan (Excel)");
+}
+function allPlayersButton(cls = "small") {
+  return h("button", { class: cls, onclick: (e) => { const b = e.target; b.disabled = true; b.textContent = "Preparing every player's plan…";
+    downloadFile(`/squads/${S.squad.id}/seasons/${S.season.id}/player-plans.xlsx`, "Seasonal-plans-all-players.xlsx").catch((x) => toast(x.message))
+      .finally(() => { b.disabled = false; b.textContent = "All players' plans (one Excel)"; }); } }, "All players' plans (one Excel)");
+}
+
 async function downloadPlan(q, file = "seasonal-plan.xlsx") {
   const res = await fetch(`/squads/${S.squad.id}/seasons/${S.season.id}/${file}${q}`, { headers: { Authorization: "Bearer " + S.token } });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Download failed"); }
@@ -1016,8 +1032,8 @@ async function planTab(rolesParam) {
     h("p", { class: "sub" }, `${plan.squad} · season ${plan.season.name} · ${fdate(plan.season.start_date)} – ${fdate(plan.season.end_date)}`),
     h("div", { class: "row" },
       can("coach", "admin") ? h("button", { onclick: async () => { err.textContent = ""; try { const r = await api(`/squads/${S.squad.id}/seasons/${S.season.id}/seasonal-plan/save${rq}`, { method: "POST" }); toast(`Plan saved (${r.new} new, ${r.updated} updated)`); planTab(rolesParam); } catch (x) { err.textContent = x.message; } } }, (plan.saved ? "Re-save " : "Save ") + (plan.category ? "S&C rows" : "plan")) : null,
-      h("button", { class: "ghost", onclick: async () => { err.textContent = ""; try { await downloadPlan(rq); } catch (x) { err.textContent = x.message; } } }, "Download Excel"),
-      h("button", { class: "ghost", onclick: async () => { err.textContent = ""; try { await downloadPlan(rq, "seasonal-workbook.xlsx"); } catch (x) { err.textContent = x.message; } } }, "Download plan workbook")),
+      h("button", { onclick: async () => { err.textContent = ""; try { await downloadPlan(rq, "seasonal-workbook.xlsx"); } catch (x) { err.textContent = x.message; } } }, "Download seasonal plan (Annual plan · Load · Components · Session)"),
+      allPlayersButton("ghost")),
     err,
     h("div", { class: "card" }, h("h3", {}, "Notes"), h("ul", {}, plan.notes.map((n) => h("li", {}, n)))),
     h("div", { class: "card" }, h("h3", {}, "Player groups in this plan"), h("div", { class: "row" }, roleBoxes.map((b) => h("label", { class: "inline" }, b.el, b.v))),
@@ -1441,8 +1457,8 @@ function physicalOnly(plan) {
 
 function scView(c, p, window, main) {
   const out = [h("div", { class: "bar" }, h("h3", {}, "Physical – Strength & Conditioning plan"),
-    h("div", { class: "row" }, h("button", { class: "small", onclick: () => downloadFile(`/players/${p.id}/sc-plan.xlsx?window=${window}`, "SC-plan.xlsx").catch((x) => toast(x.message)) }, "Download S&C plan (Excel)"),
-      S.season ? h("button", { class: "small ghost", onclick: () => downloadFile(`/squads/${p.squad_id}/seasons/${S.season.id}/sc-season-plan/players/${p.id}.xlsx`, "SC-season-plan.xlsx").catch((x) => toast(x.message)) }, "Periodized season plan (Excel)") : null)),
+    h("div", { class: "row" }, playerPlanButton(p.squad_id, p.id),
+      S.season ? h("button", { class: "small ghost", onclick: () => { S.pid = null; openAthletePlan(p.id); } }, "16-step seasonal plan") : null)),
     h("p", { class: "sub" }, "The seasonal S&C plan in the same layout as the individual plan (its physical part), followed by the focus sessions and the week-by-week plan."),
     ...planView(physicalOnly(main)),
     h("h3", {}, "S&C sessions"),
@@ -1522,7 +1538,7 @@ async function planPanel(p, host, window) {
       st.editing ? h("button", { class: "small ghost", onclick: () => load(st.fresh) }, "Discard changes") : null,
       ls ? h("button", { class: "small ghost", onclick: versions }, "Versions") : null,
       sv || ls ? h("button", { class: "small ghost", onclick: () => load(!st.fresh) }, st.fresh ? "Back to the saved version" : "Regenerate from latest data") : null,
-      h("button", { class: "small ghost", onclick: () => downloadFile(`/players/${p.id}/individual-plan.xlsx?window=${window}${st.fresh ? "&fresh=true" : ""}`, "individual-plan.xlsx").catch((x) => toast(x.message)) }, "Excel")));
+      playerPlanButton(p.squad_id, p.id, "small ghost")));
   }
   function render() {
     const vlist = st.versions && st.versions.length ? h("details", { open: true }, h("summary", {}, "Saved versions"), h("ul", { class: "reviews" },
@@ -1677,6 +1693,7 @@ const openP = (id) => () => { S.pid = id; S.from = "physical"; go("players"); };
 async function physicalTab() {
   const main = $("#main");
   if (!S.season) return main.replaceChildren(h("h1", {}, "Physical"), h("div", { class: "card" }, "This squad has no season yet. Create one in Admin → Seasons."));
+  if (S.athletePid) return athletePlanView(S.athletePid);
   const sec = S.physSec || "today";
   const d = await api(`/squads/${S.squad.id}/seasons/${S.season.id}/physical${S.physWin ? "?window=" + S.physWin : ""}`);
   const tabs = h("div", { class: "row cat-tabs", role: "tablist" }, [["today", "Today"], ["season", "Season plan"], ["dashboard", "Dashboard"], ["groups", "S&C groups"], ["targets", "Targets"], ["progress", "Re-test & progress"], ["growth", "Growth & body"]]
@@ -1766,7 +1783,8 @@ function playerPlanList() {
   api(`/players?squad_id=${S.squad.id}`).then((ps) => host.replaceChildren(...ps.filter((p) => p.is_active)
     .sort((a, b) => (a.squad_no ?? 999) - (b.squad_no ?? 999) || a.full_name.localeCompare(b.full_name))
     .map((p) => h("div", { class: "item" }, h("span", {}, (p.squad_no ? `#${p.squad_no}  ` : "") + p.full_name, h("span", { class: "sub" }, " · " + ROLE[p.role])),
-      h("button", { class: "small ghost", onclick: () => downloadFile(`/squads/${S.squad.id}/seasons/${S.season.id}/sc-season-plan/players/${p.id}.xlsx`, "SC-season-plan.xlsx").catch((x) => toast(x.message)) }, "Download (Excel)")))))
+      h("div", { class: "row" }, h("button", { class: "small", onclick: () => openAthletePlan(p.id) }, "Open 16-step seasonal plan"),
+        playerPlanButton(S.squad.id, p.id, "small ghost"))))))
     .catch((x) => host.replaceChildren(h("div", { class: "err" }, x.message)));
   return host;
 }
@@ -1786,15 +1804,13 @@ function physSeason() {
     host.replaceChildren(
       h("div", { class: "card" }, h("div", { class: "bar" }, h("h2", {}, "Periodized S&C season plan"),
           h("div", { class: "row" },
-            h("button", { class: "small ghost", onclick: () => downloadFile(`/squads/${S.squad.id}/seasons/${S.season.id}/sc-season-plan.xlsx`, "SC-season-plan.xlsx").catch((x) => toast(x.message)) }, "Squad plan (Excel)"),
-            h("button", { class: "small", onclick: (e) => { const b = e.target; b.disabled = true; b.textContent = "Preparing all plans…";
-              downloadFile(`/squads/${S.squad.id}/seasons/${S.season.id}/sc-season-plans.zip`, "SC-season-plans.zip").catch((x) => toast(x.message))
-                .finally(() => { b.disabled = false; b.textContent = "Download all plans (squad + every player)"; }); } }, "Download all plans (squad + every player)"))),
+            h("button", { class: "small ghost", onclick: () => downloadPlan("", "seasonal-workbook.xlsx").catch((x) => toast(x.message)) }, "Squad seasonal plan (Excel)"),
+            allPlayersButton())),
         h("p", { class: "sub" }, `${p.source}. Targets from ${p.based_on}; order of need: ${p.target_order.join(" → ")}.`),
         h("div", { class: "row legend" }, Object.entries({ accumulation: "Accumulation", transmutation: "Transmutation", realization: "Realization", competition: "Competition", transition: "Transition" })
           .map(([k, t]) => h("span", { class: "chip m-" + k }, t))),
         chart, grid),
-      h("details", { class: "card" }, h("summary", {}, "Player-by-player plans (each built on the player's own test ranks)"),
+      h("details", { class: "card", open: true }, h("summary", {}, "Player-by-player plans – the 16-step seasonal plan (STEP 0 answers first) and the periodized Excel"),
         h("div", { class: "list" }, playerPlanList())),
       ...p.mesocycles.map((m) => h("details", { class: "card", open: m.number === 1 },
         h("summary", {}, h("strong", {}, m.label), ` · ${fdate(String(m.start).slice(0, 10))} – ${fdate(String(m.end).slice(0, 10))} · ${m.weeks} week${m.weeks === 1 ? "" : "s"}` +
@@ -1810,6 +1826,165 @@ function physSeason() {
         h("h3", {}, "Notes"), p.notes.map((n) => h("p", { class: "sub" }, n))));
   }).catch((x) => host.replaceChildren(h("div", { class: "err" }, x.message)));
   return host;
+}
+
+// ───────────── athlete seasonal plan in 16 steps (Zatsiorsky & Kraemer ch. 1, 5) ─────────────
+const openAthletePlan = (pid) => { S.athletePid = pid; S.athleteEdit = false; go("physical"); };
+const fd = (d) => (d ? fdate(String(d).slice(0, 10)) : "–");
+
+async function athletePlanView(pid) {
+  const main = $("#main");
+  const base = `/squads/${S.squad.id}/seasons/${S.season.id}/athlete-plans/${pid}`;
+  const s0 = await api(`${base}/step0`);
+  const back = h("button", { class: "ghost small", onclick: () => { S.athletePid = null; physicalTab(); } }, "← Physical");
+  const head = (extra) => h("div", { class: "bar" }, h("div", { class: "row" }, back, h("h1", {}, `Seasonal plan (16 steps) – ${s0.player.name}`)), h("div", { class: "row" }, extra));
+  const sub = h("p", { class: "sub" }, `${S.squad.name} · ${s0.season.name} · Zatsiorsky & Kraemer, Science and Practice of Strength Training, ch. 1 and 5 (ch. 10 for young athletes)`);
+  if (!s0.answers || S.athleteEdit) {
+    main.replaceChildren(head(null), sub, step0Form(s0, base, () => { S.athleteEdit = false; athletePlanView(pid); }));
+    return;
+  }
+  const p = await api(base);
+  const dl = playerPlanButton(S.squad.id, pid);
+  const edit = canCoach() ? h("button", { class: "small ghost", onclick: () => { S.athleteEdit = true; athletePlanView(pid); } }, "Edit STEP 0 answers") : null;
+  main.replaceChildren(head([edit, dl]), sub, ...athletePlanBody(p));
+}
+
+function step0Form(s0, base, done) {
+  const v = { ...s0.prefill, ...(s0.answers || {}) };
+  const keep = (k) => (s0.answers && s0.answers[k] != null && s0.answers[k] !== "" ? s0.answers[k] : s0.prefill[k]);
+  const inp = (k, type = "text", attrs = {}) => h("input", { type, value: keep(k) ?? "", ...attrs });
+  const sel = (k, opts, def) => h("select", {}, opts.map(([val, t]) => h("option", { value: val, selected: (keep(k) ?? def) === val }, t)));
+  const f = {
+    position: inp("position"), age: inp("age", "number", { min: 8, max: 60 }), sex: sel("sex", [["male", "Male"], ["female", "Female"]], "male"),
+    bw: inp("body_weight_kg", "number", { step: "0.1", min: 20, max: 150 }), tage: inp("training_age_years", "number", { step: "0.5", min: 0, max: 30 }),
+    level: sel("level", [["", "– not sure (assume from age) –"], ...Object.entries(s0.levels)], ""),
+    start: inp("plan_start", "date"), end: inp("plan_end", "date"),
+    days: sel("training_days", [["", "– choose –"], ...[1, 2, 3, 4, 5, 6, 7].map((n) => [n, `${n} day${n > 1 ? "s" : ""} a week`])], ""),
+    spd: sel("sessions_per_day", [["", "– choose –"], [1, "1 session a day"], [2, "2 sessions a day"], [3, "3 sessions a day"]], ""),
+    result: inp("sport_result", "text", { placeholder: "e.g. 312 runs at 28, or 14 wickets at 18" }),
+    injuries: inp("injuries", "text", { placeholder: "coach-safe wording only" }), recovery: inp("recovery"),
+    equipment: inp("equipment", "text", { placeholder: "e.g. bands, medicine balls, light dumbbells" }),
+    peak: sel("last_season_peak", [["", "– not stated –"], ["yes", "Yes, peaked on time"], ["early", "Peaked too early"], ["late", "Peaked too late"], ["no", "Did not peak"], ["first season", "First season"]], ""),
+    loads: inp("last_season_loads", "text", { placeholder: "e.g. 2 S&C sessions a week, body weight only" }),
+    inc: sel("load_increase", [["", "– not sure –"], ...Object.entries(s0.increase).map(([k, t]) => [k, `${t} (realization ${k === "mild" ? "≈2" : k === "normal" ? "≈4" : "≈6-7"} weeks)`])], ""),
+  };
+  // keep the selected value types for numbers
+  [f.days, f.spd].forEach((s) => [...s.options].forEach((o) => { if (String(keep(s === f.days ? "training_days" : "sessions_per_day")) === o.value) o.selected = true; }));
+  const lim = new Set(keep("limiting") || []);
+  const limBox = h("div", { class: "row" }, Object.entries(s0.abilities).map(([k, t]) =>
+    h("label", { class: "chip" }, h("input", { type: "checkbox", checked: lim.has(k), onchange: (e) => (e.target.checked ? lim.add(k) : lim.delete(k)) }), " " + t)));
+  const comps = (keep("competitions") || []).map((c) => ({ ...c }));
+  const compHost = h("div");
+  const drawComps = () => compHost.replaceChildren(h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Competition", "Starts", "Days", "Importance", ""].map((c) => h("th", {}, c)))),
+    h("tbody", {}, comps.map((c, i) => h("tr", {},
+      h("td", {}, h("input", { value: c.name || "", oninput: (e) => (c.name = e.target.value) })),
+      h("td", {}, h("input", { type: "date", value: String(c.start || "").slice(0, 10), onchange: (e) => (c.start = e.target.value) })),
+      h("td", {}, h("input", { type: "number", min: 1, max: 60, value: c.days || 1, style: "width:5em", oninput: (e) => (c.days = +e.target.value) })),
+      h("td", {}, h("select", { onchange: (e) => (c.importance = e.target.value) }, [["main", "MAIN (must peak)"], ["secondary", "Secondary (test)"]].map(([k, t]) => h("option", { value: k, selected: c.importance === k }, t)))),
+      h("td", {}, h("button", { class: "small ghost", onclick: () => { comps.splice(i, 1); drawComps(); } }, "Remove"))))))),
+    h("button", { class: "small ghost", onclick: () => { comps.push({ name: "", start: "", days: 1, importance: "secondary" }); drawComps(); } }, "+ Add competition"));
+  drawComps();
+  const exams = (keep("school_periods") || []).map((x) => ({ ...x }));
+  const examHost = h("div");
+  const drawExams = () => examHost.replaceChildren(...exams.map((x, i) => h("div", { class: "row" },
+    h("input", { value: x.name || "", placeholder: "e.g. Term exams", oninput: (e) => (x.name = e.target.value) }),
+    h("input", { type: "date", value: String(x.start || "").slice(0, 10), onchange: (e) => (x.start = e.target.value) }),
+    h("input", { type: "date", value: String(x.end || "").slice(0, 10), onchange: (e) => (x.end = e.target.value) }),
+    h("button", { class: "small ghost", onclick: () => { exams.splice(i, 1); drawExams(); } }, "Remove"))),
+    h("button", { class: "small ghost", onclick: () => { exams.push({ name: "Exams", start: "", end: "" }); drawExams(); } }, "+ Add school / exam period"));
+  drawExams();
+  const num = (el) => (el.value === "" ? null : +el.value);
+  const txt = (el) => el.value.trim() || null;
+  const err = h("div", { class: "err", hidden: true });
+  const save = h("button", { onclick: async () => {
+    err.hidden = true;
+    const body = { position: txt(f.position), age: num(f.age), sex: f.sex.value, body_weight_kg: num(f.bw), training_age_years: num(f.tage),
+      level: f.level.value || null, plan_start: f.start.value || null, plan_end: f.end.value || null, training_days: num(f.days), sessions_per_day: num(f.spd),
+      sport_result: txt(f.result), limiting: [...lim], injuries: txt(f.injuries), recovery: txt(f.recovery), equipment: txt(f.equipment),
+      last_season_peak: f.peak.value || null, last_season_loads: txt(f.loads), load_increase: f.inc.value || null,
+      competitions: comps.filter((c) => c.start).map((c) => ({ name: c.name || "Competition", start: String(c.start).slice(0, 10), days: c.days || 1, importance: c.importance || "secondary" })),
+      school_periods: exams.filter((x) => x.start && x.end).map((x) => ({ name: x.name || "Exams", start: String(x.start).slice(0, 10), end: String(x.end).slice(0, 10) })) };
+    save.disabled = true;
+    try { await api(`${base}/step0`, { method: "PUT", body }); toast("STEP 0 saved – building the plan"); done(); }
+    catch (x) { err.textContent = x.message; err.hidden = false; save.disabled = false; }
+  } }, "Save STEP 0 and build the plan");
+  const q = (n) => s0.questions.find((x) => x.n === n).text;
+  const block = (n, ...kids) => h("div", { class: "card" }, h("h3", {}, `${n}. ${q(n)}`), ...kids);
+  return h("div", {},
+    h("p", { class: "hint" }, "STEP 0 – the plan is not built until these are answered. Fields are filled from the app where it knows the answer; anything left empty becomes a stated assumption."),
+    block(1, h("div", { class: "grid" }, field("Sport", h("input", { value: "Cricket", disabled: true })), field("Position / event", f.position))),
+    block(2, h("div", { class: "grid" }, field("Age", f.age), field("Sex", f.sex), field("Body weight (kg)", f.bw), field("Training age (years)", f.tage), field("Level", f.level))),
+    block(3, compHost),
+    block(4, h("div", { class: "grid" }, field("Plan starts", f.start), field("Plan ends (optional)", f.end)), h("p", { class: "sub" }, "Weeks available are counted from the start to the end of the last competition, plus at least 3 transition weeks.")),
+    block(5, h("div", { class: "grid" }, field("Training days a week", f.days), field("Sessions a day", f.spd))),
+    block(6, s0.tests.length ? catTable(["Test", "Result", "Area", "Rank (100 = best)"], s0.tests.map((t) => [t.test, t.value, t.area, t.rank == null ? "–" : Charts.num(t.rank, 0)]))
+      : h("p", { class: "sub" }, "No test results in this season yet."), s0.test_window ? h("p", { class: "sub" }, `From the ${s0.test_window} tests.`) : null,
+      field("Competition result in the main sport exercise", f.result)),
+    block(7, h("p", { class: "sub" }, "Ticked from the test ranks below 50 where available – change as needed."), limBox),
+    block(8, h("div", { class: "grid" }, field("Injuries", f.injuries), field("Recovery problems", f.recovery), field("Equipment limits", f.equipment)), examHost),
+    block(9, h("div", { class: "grid" }, field("Did the athlete peak on time last season?", f.peak), field("Loads used last season", f.loads), field("Load increase this season", f.inc))),
+    err, h("div", { class: "row" }, save));
+}
+
+const OKCLS = { true: "ok", false: "stop", null: "warn" };
+const OKTXT = { true: "OK", false: "FIX", null: "Limited by the calendar" };
+
+function athletePlanBody(p) {
+  const chk = p.self_check;
+  const fails = chk.filter((c) => c.ok === false).length;
+  const out = [];
+  out.push(h("div", { class: "card" }, h("div", { class: "bar" }, h("h2", {}, "STEP 16 – Self-check"),
+      h("span", { class: "chip " + (fails ? "stop" : "ok") }, fails ? `${fails} to fix` : `All ${chk.length} checks pass`)),
+    catTable(["", "Check", "Detail"], chk.map((c) => [h("span", { class: "chip " + OKCLS[c.ok] }, OKTXT[c.ok]), c.item, c.detail]))));
+  out.push(h("div", { class: "card" }, h("h2", {}, "1. Summary of inputs + assumptions"),
+    catTable(["#", "STEP 0", "Answer"], p.inputs.map((x) => [x.n, x.q, x.a])),
+    p.assumptions.length ? [h("h4", {}, "Assumptions"), h("ul", {}, p.assumptions.map((a) => h("li", {}, a)))] : h("p", { class: "sub" }, "No assumptions – every question was answered.")));
+  const wk = p.weeks;
+  const chart = Charts.columns({ ariaLabel: "Relative volume per week", height: 140, highlight: -1, capAll: true, format: (v) => `${v}%`,
+    data: wk.map((w) => ({ label: `W${w.week}`, value: w.volume, cls: MESO_CLS[w.meso_type], tip: [`Week ${w.week} · ${fd(w.start)}`, `${p.mesocycles[w.mesocycle - 1].label}`, `Volume ${w.volume}% · ${w.sessions} session(s)`, w.targets.join(" + ")] })) });
+  out.push(h("div", { class: "card" }, h("h2", {}, "2. Season overview"),
+    h("p", { class: "sub" }, `Model: ${p.model.model} · ${p.macrocycles.length} macrocycle(s) · peak: ${p.macrocycles.map((m) => `${m.peak} (${fd(m.start)})`).join(", ")}`),
+    h("div", { class: "row legend" }, Object.entries({ accumulation: "Accumulation", transmutation: "Transmutation", realization: "Realization", competition: "Competition", transition: "Transition" })
+      .map(([k, t]) => h("span", { class: "chip m-" + k }, t))),
+    chart,
+    h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Weeks", "Dates", "Period", "Mesocycle", "Targets", "Methods", "Load %", "Tests / competitions"].map((c) => h("th", {}, c)))),
+      h("tbody", {}, p.mesocycles.map((m) => h("tr", {}, h("td", {}, m.weeks), h("td", {}, `${fd(m.start)} – ${fd(m.end)}`), h("td", {}, m.period),
+        h("td", { class: "m-" + m.type }, m.label), h("td", {}, m.targets.join(" + ") + (m.halves.length ? h("div", { class: "sub" }, m.halves.map((x) => `${fd(x.from)}: ${x.targets.join(" + ")}`).join(" · ")) : "")),
+        h("td", {}, m.methods.join(", ")), h("td", {}, m.relative_load),
+        h("td", {}, p.testing.filter((t) => t.date >= m.start && t.date <= m.end).map((t) => `${fd(t.date)}: ${t.kind}`).join("; ") || "–"))))))));
+  out.push(h("div", { class: "card" }, h("h2", {}, "3. Load curve"), h("ul", {}, p.load_curve.map((t) => h("li", {}, t)))));
+  out.push(h("div", { class: "card" }, h("h2", {}, "4. Exercise complexes (with change dates)"),
+    ...p.blocks.map((b) => h("p", {}, h("strong", {}, `Complex ${b.number} from ${fd(b.from)}: `), b.exercises.join(", ")))));
+  out.push(h("h2", {}, "5. Mesocycles and sample microcycles"));
+  for (const m of p.mesocycles) {
+    out.push(h("details", { class: "card", open: m.number === 1 },
+      h("summary", {}, h("strong", {}, m.label), ` · ${fd(m.start)} – ${fd(m.end)} · ${m.weeks} wk · ` + (m.targets.join(" + ") || "–")),
+      h("div", { class: "row" }, m.methods.map((x) => h("span", { class: "chip" }, x)), h("span", { class: "chip " + (m.new_complex ? "warn" : "ok") }, m.new_complex ? "New complex" : "Same complex"),
+        m.type === "accumulation" || m.type === "transmutation" ? h("span", { class: "chip info" }, `${Math.round(m.target_share * 100)}% of the sets on the targets`) : null),
+      h("p", { class: "sub" }, `Technique: ${m.technique}. Retained: ${m.retained.join(", ") || "–"}.`),
+      catTable(["#", "Exercise", "Ability", "Role", "Sets x reps / load", "Rest"], m.complex.map((e, i) => [i + 1, e.name, e.ability_label, e.role, e.dose, e.rest])),
+      m.microcycle.length ? [h("h4", {}, "Sample week"), catTable(["Day", "When", "Load", "Exercises", "Restoration"], m.microcycle.map((d) => [d.day, d.when || d.note || "", d.load ? d.load + "%" : "",
+        d.items.length ? h("ul", {}, d.items.map((x) => h("li", {}, `${x.name}${x.dose ? ": " + x.dose : ""}${x.rest ? " · rest " + x.rest : ""}`))) : "", d.restoration || ""]))] : null,
+      m.competition_microcycle.length ? [h("h4", {}, `Competition microcycle (${m.competition_microcycle.length} days)`),
+        catTable(["Date", "Day", "Session", "Restoration"], m.competition_microcycle.map((d) => [fd(d.date), d.day, d.match ? h("strong", {}, d.session) : d.session, d.restoration])),
+        m.competition_note ? h("p", { class: "hint warn" }, m.competition_note) : null] : null));
+  }
+  for (const t of p.tapers) {
+    out.push(h("div", { class: "card" }, h("h2", {}, `6. Taper – last 14 days before ${t.competition} (${fd(t.start)})`),
+      catTable(["Date", "Days out", "Session", "Exercises", "Load", "Restoration"], t.rows.map((d) => [fd(d.date) + (d.past ? " (past)" : ""), d.days_out, d.session,
+        d.exercises.map((e) => `${e.name} ${e.dose}`).join(", ") || "–", d.load + "%", d.restoration]))));
+  }
+  const tr = p.transition;
+  out.push(h("div", { class: "card" }, h("h2", {}, "7. Competition period and transition"),
+    h("ul", {}, p.steps.find((s) => s.n === 10).lines.map((t) => h("li", {}, t))),
+    h("h4", {}, `Transition: ${tr.weeks} week(s)` + (tr.from ? ` from ${fd(tr.from)}` : "")), h("ul", {}, [...tr.guidelines, tr.body_weight].map((t) => h("li", {}, t)))));
+  out.push(h("div", { class: "card" }, h("h2", {}, "8. Monitoring and adjustment"),
+    catTable(["Date", "Mesocycle", "Test / competition", "What", "If below expectation"], p.testing.map((t) => [fd(t.date), t.mesocycle, t.kind, t.what, t.if_below]))));
+  out.push(h("details", { class: "card" }, h("summary", {}, h("strong", {}, "STEPS 1-14 – the work behind the plan")),
+    ...p.steps.map((s) => h("div", {}, h("h3", {}, `STEP ${s.n} – ${s.title}`), h("ul", {}, s.lines.map((t) => h("li", {}, t))),
+      s.table ? catTable(["Weeks", "Period", "Mesocycle", "Main goal"], s.table.map((r) => [r.weeks, r.period, r.mesocycle, r.goal])) : null))));
+  if (p.notes.length) out.push(h("div", { class: "card" }, h("h3", {}, "Notes"), p.notes.map((n) => h("p", { class: "sub" }, n))));
+  return out;
 }
 
 function physDashboard(d) {

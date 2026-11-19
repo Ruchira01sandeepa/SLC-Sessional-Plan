@@ -32,10 +32,17 @@ RECOVERY_FACTOR = 0.70          # the last week of a preparation block is lighte
 LEVELS = {                      # percentage at the first and last week of the phase, for phases without a ramp
     PRECOMP: (0.70, 0.62), COMP: (0.50, 0.45), TRANS: (0.40, 0.30),
 }
-LOADING = {                     # (volume, intensity, load), as on the supplied sheet
-    GENERAL: ("High", "low", "High"), SPECIAL: ("High", "low", "Medium"), PRECOMP: ("Medium", "Medium", "low"),
-    COMP: ("low", "High", "low"), TRANS: ("low", "low", "low"),
+LOADING = {                     # (volume, intensity) per phase: volume falls while intensity rises toward competition
+    GENERAL: ("High", "low"), SPECIAL: ("High", "Medium"), PRECOMP: ("Medium", "High"),
+    COMP: ("low", "High"), TRANS: ("low", "low"),
 }
+# The supplied sheet typed "Load" by phase and so contradicted its own % row (Medium in the hardest weeks). Here Load is
+# read from the Percentage row, so the two always agree.
+LOAD_HIGH, LOAD_MEDIUM = 0.75, 0.50
+
+
+def load_level(p: float) -> str:
+    return "" if not p else "High" if p >= LOAD_HIGH else "Medium" if p >= LOAD_MEDIUM else "low"
 
 # rule per phase: "all" every week, "alt" every second week, "non_recovery" every week except the lighter week of a block.
 # Missing phase = not marked. Flags: first = also the first week of the season, last = also the last week,
@@ -70,8 +77,18 @@ PHASE_RULES: dict[str, list[tuple[str, dict]]] = {
         ("Offensive", {_P: "alt", _C: "alt"}),
         ("Defensive", {_P: "alt", _C: "alt"}),
     ],
+    # Nutrition: a '*' marks the weeks a nutrient is EMPHASISED (a balanced diet is needed every week). Marking every nutrient
+    # every week, as the supplied sheet does, says nothing; these follow the load (see NUTRITION_FOCUS in build_grid).
     "Nutrition": [(n, {_G: "all", _S: "all", _P: "all", _C: "all", _T: "all"})
                   for n in ("Carbohydrate", "Fat", "Protein", "Vitamin", "Minerals", "Electrolytes")],
+}
+NUTRITION_FOCUS = {
+    "Carbohydrate": "fuel: weeks at 60% or more, match weeks, pre-competition and competition",
+    "Fat": "energy for growth and high volume: general preparation and transition; recovery days in competition (never on a match day or the day before)",
+    "Protein": "repair: weeks with strength work, and transition",
+    "Vitamin": "every week (growing players)",
+    "Minerals": "every week (calcium and iron for growing players)",
+    "Electrolytes": "sweat losses: weeks at 75% or more, match weeks, pre-competition and competition",
 }
 
 # Which exercise kinds (exercise_kinds.PHASE_KINDS) a mark stands for. Rows not listed here (flexibility, mental,
@@ -221,6 +238,18 @@ def build_grid(*, squad_name: str, season: dict, phases: list[dict], events: lis
                 marks.append(on)
             out.append({"label": label, "marks": marks})
         sections.append({"name": sec, "rows": out})
+    strength = next(r for s in sections if s["name"] == "Physical" for r in s["rows"] if r["label"] == "Strength")["marks"]
+    focus = {
+        "Carbohydrate": lambda w: pct[w] >= 0.60 or w in matches or kind[w] in (PRECOMP, COMP),
+        "Fat": lambda w: kind[w] in (GENERAL, TRANS, COMP),
+        "Protein": lambda w: strength[w] or kind[w] == TRANS,
+        "Vitamin": lambda w: True, "Minerals": lambda w: True,
+        "Electrolytes": lambda w: pct[w] >= LOAD_HIGH or w in matches or kind[w] in (PRECOMP, COMP),
+    }
+    for s in sections:
+        if s["name"] == "Nutrition":
+            for r in s["rows"]:
+                r["marks"] = [bool(focus[r["label"]](w)) for w in range(n)]
 
     def runs(values):                                           # consecutive weeks with the same value -> (first, last, value)
         out, a = [], 0
@@ -233,7 +262,7 @@ def build_grid(*, squad_name: str, season: dict, phases: list[dict], events: lis
     spans_years = starts[0].year != starts[-1].year
     month_key = [(d.year, d.month) for d in starts]
     mesos = [(a, b, f"{MONTHS[m - 1]} {y}" if spans_years and (a == 0 or m == 1) else MONTHS[m - 1], m) for a, b, (y, m) in runs(month_key)]
-    return {
+    g = {
         "title": f"ANNUAL PLAN FOR {squad_name.upper()} ({season['name']})",
         "squad": squad_name, "season": season["name"], "weeks": n, "week_starts": starts, "age_group": prof.code,
         "periods": [(a, b, v) for a, b, v in runs([PERIOD_OF[k] for k in kind])],
@@ -243,9 +272,11 @@ def build_grid(*, squad_name: str, season: dict, phases: list[dict], events: lis
         "days": [d.day for d in starts], "percentage": pct, "hours": [round(h, 1) if h else None for h in hours],
         "match_weeks": [w in matches for w in range(n)], "match_counts": match_n, "test_weeks": [w in tests for w in range(n)], "tests_source": tests_source,
         "recovery_weeks": recovery, "kinds": kind, "sections": sections,
-        "loading": {"Volume": [LOADING[k][0] for k in kind], "Intensity": [LOADING[k][1] for k in kind], "Load": [LOADING[k][2] for k in kind]},
+        "loading": {"Volume": [LOADING[k][0] for k in kind], "Intensity": [LOADING[k][1] for k in kind], "Load": [load_level(p) for p in pct]},
         "generated_on": generated_on, "season_end": e0,
         "notes": [
+            "The whole season is ONE macrocycle. The Mesos row shows the calendar months; the numbered blocks in the Macros row are "
+            "the training blocks (2 to 6 weeks, shorter toward competition).",
             "Weeks start on the season's start date and run in blocks of seven days. The Dates row shows the day of the month each week starts on.",
             f"Percentage is the planned relative training load, not a measurement. Preparation builds from {int(START * 100)}% to {int(peak * 100)}% with a lighter week at the end of each block; "
             f"the supplied rugby sheet peaks higher, so this is lower for {prof.code} players. Coaches adjust it.",
@@ -256,6 +287,183 @@ def build_grid(*, squad_name: str, season: dict, phases: list[dict], events: lis
              else "Test weeks are SUGGESTED (first week, middle of the in-season phase, last week) because no fitness-test events are in the calendar."),
             "Medical and Field are marked in every test week. Lab is left empty because the system does not schedule laboratory tests.",
             "Competition marks the weeks with a match in the calendar. Week hours add up the training and match hours in the calendar (blank when none have an end time).",
-            "Volume, Intensity and Load follow the supplied sheet's pattern for each phase. They are guidance, not a prescription for any one player.",
+            "Volume falls and Intensity rises toward competition. Load is read from the Percentage row (High from 75%, Medium from 50%), "
+            "so the words and the numbers never disagree. They are guidance, not a prescription for any one player.",
+            "Nutrition: a '*' marks the weeks a nutrient is EMPHASISED; a balanced diet is needed every week. "
+            + "; ".join(f"{k} - {v}" for k, v in NUTRITION_FOCUS.items()) + ".",
         ],
+    }
+    g["daily"] = build_daily(g, season=season, phases=phases, events=events, kind_of_week=kind, pct_of_week=pct, short=short)
+    if not any(g["hours"]):                                     # no session times in the calendar: the planned hours of the week's days
+        d = g["daily"]
+        g["hours"] = [round(sum(d["hours"][i] or 0 for i in range(d["weeks"]) if d["week_of_day"][i] == w), 1) or None for w in range(n)]
+        g["hours_planned"] = True
+    return g
+
+
+# ───────────── the day-by-day grid (the sheets are drawn one column per DAY) ─────────────
+# Day kinds. Competition days follow the match days: match, before (day before a match), after (day after a match, no match next
+# day), between (between two matches), free (no match the day before or after). Other weeks follow a weekly microcycle template.
+WEEK_TEMPLATE = {
+    GENERAL: ["heavy", "medium", "light", "heavy", "medium", "practice", "rest"],
+    SPECIAL: ["heavy", "medium", "light", "heavy", "medium", "practice", "rest"],
+    PRECOMP: ["heavy", "medium", "light", "heavy", "light", "practice", "rest"],
+    TRANS: ["active", "rest", "active", "rest", "active", "rest", "rest"],
+}
+# share of the week's percentage on each kind of day (rule of 60%: the lightest training day is about 60% of the heaviest)
+DAY_FACTOR = {"heavy": 1.0, "medium": 0.8, "light": 0.6, "practice": 0.7, "rest": 0.0, "active": 0.6,
+              "match": 1.0, "free": 0.8, "before": 0.6, "after": 0.5, "between": 0.5}
+DAY_KIND_LABEL = {"heavy": "Heavy training day", "medium": "Medium training day", "light": "Light day", "practice": "Match practice",
+                  "rest": "Rest", "active": "Active rest", "match": "Match", "free": "Training day", "before": "Day before a match",
+                  "after": "Recovery day", "between": "Between matches"}
+TRAINING_DAYS = {"heavy", "medium", "light", "practice", "active", "free", "before", "after", "between"}
+# what each row does on each kind of day (weekday names are allowed too); the week's own mark must also be on
+DAY_RULES: dict[str, dict[str, set]] = {
+    "Physical": {"Endurance": {"medium", "active"}, "Strength": {"heavy", "free", "after", "between"}, "Speed": {"heavy", "free", "before"},
+                 "Flexibility": TRAINING_DAYS | {"match"}, "Coordination": {"heavy", "medium", "practice", "before", "after", "between", "free"}},
+    "Mental": {"Concentration": {"heavy", "practice", "match", "before"}, "Relaxation": {"light", "after", "between", "rest"},
+               "Goal setting": {"Mon", "before", "first", "last"}, "Focusing": {"medium", "practice", "match", "before"},
+               "Imagination": {"light", "practice", "before", "between"}, "Confidence": {"practice", "match", "before", "after", "between", "free"}},
+    "Technical": {"Basic": {"medium", "practice", "between"}, "Advance": {"medium", "practice", "free"}, "Competition": {"practice", "match", "before"},
+                  "Explosive power": {"heavy", "free"}, "Reaction speed": {"heavy", "practice", "free", "before"},
+                  "Anaerobic endurance": {"medium"}},
+    "Tactical": {"Basic": {"light", "after", "between"}, "Offensive": {"medium", "practice", "match", "before"}, "Defensive": {"medium", "practice", "match", "before"}},
+    # nutrition emphasis by day, inside the weeks the weekly grid emphasises it
+    "Nutrition": {"Carbohydrate": {"heavy", "medium", "practice", "match", "before", "free"},
+                  "Fat": {"heavy", "medium", "light", "practice", "active", "rest", "free", "after", "between"}, "Protein": {"heavy", "free", "after", "between", "active"},
+                  "Vitamin": TRAINING_DAYS | {"match", "rest"}, "Minerals": TRAINING_DAYS | {"match", "rest"},
+                  "Electrolytes": {"heavy", "medium", "practice", "match", "free"}},
+}
+# (volume, intensity) for each kind of day; the day's Load is read from its Percentage (load_level), so they always agree
+# planned hours for a kind of day, used when the calendar has no session times (a match day is a one-day game)
+PLANNED_HOURS = {"heavy": 2.0, "medium": 1.5, "light": 1.0, "practice": 2.0, "rest": 0.0, "active": 1.0,
+                 "match": 7.0, "free": 2.0, "before": 1.5, "after": 1.0, "between": 1.0}
+DAY_LOADING = {"heavy": ("High", "Medium"), "medium": ("High", "low"), "light": ("low", "low"),
+               "practice": ("Medium", "High"), "rest": ("", ""), "active": ("low", "low"),
+               "match": ("low", "High"), "free": ("Medium", "High"), "before": ("low", "Medium"),
+               "between": ("low", "low"), "after": ("low", "low")}
+
+
+def build_daily(g: dict, *, season: dict, phases: list[dict], events: list[dict], kind_of_week: list[str], pct_of_week: list[float],
+                short: bool = False) -> dict:
+    """The season with one column per day. Competition days follow the match days (Zatsiorsky ch. 5: the competition microcycle
+    matches the competition); preparation and transition weeks follow a weekly microcycle template with the load varied day to day."""
+    s0, e0 = season["start_date"], season["end_date"]
+    days = [s0 + timedelta(days=i) for i in range((e0 - s0).days + 1)]
+    n = len(days)
+    wk = [(d - s0).days // 7 for d in days]
+    kind = [kind_of_week[w] for w in wk]
+    real = sorted({ev["date"] for ev in events if ev["event_type"] == "match" and s0 <= ev["date"] <= e0})
+    mset = set(real)
+    assumed: list = []
+    comp_weeks = sorted({wk[i] for i in range(n) if kind[i] == COMP})
+    for w in comp_weeks:                                         # a competition week with no match in the calendar: assume one
+        idx = [i for i in range(n) if wk[i] == w and kind[i] == COMP]
+        if any(days[i] in mset for i in idx):
+            continue
+        if short:
+            pick = [days[i] for i in idx if (i - idx[0]) % 2 == 0]           # a tournament: a match every second day
+        else:
+            pick = [next((days[i] for i in idx if days[i].weekday() == 5), days[idx[-1]])]   # a league week: Saturday
+        assumed += pick
+        mset |= set(pick)
+    if short and real:
+        assumed = []
+    tests = {ev["date"] for ev in events if ev["event_type"] == "fitness_test"}
+    hours = [0.0] * n
+    for ev in events:
+        if ev["event_type"] in ("training", "match") and ev.get("hours") and s0 <= ev["date"] <= e0:
+            hours[(ev["date"] - s0).days] += ev["hours"]
+
+    def day_kind(i: int) -> str:
+        d = days[i]
+        b, a = d + timedelta(days=1) in mset, d - timedelta(days=1) in mset
+        if d in mset:
+            return "match"
+        if kind[i] == COMP:
+            return "free" if not b and not a else "after" if a and not b else "between" if a else "before"
+        if b:
+            return "before"                                      # a match in a preparation week: the day before is light
+        return WEEK_TEMPLATE[kind[i]][d.weekday()]
+
+    dk = [day_kind(i) for i in range(n)]
+    if not tests and g.get("tests_source") == "suggested":      # the suggested test weeks: test on the freshest day of the week
+        rank = {"heavy": 0, "free": 0, "medium": 1, "light": 2, "practice": 2, "active": 3}
+        for w, on in enumerate(g["test_weeks"]):
+            idx = [i for i in range(n) if wk[i] == w and dk[i] in rank]
+            if on and idx:
+                tests.add(days[min(idx, key=lambda i: (rank[dk[i]], i))])
+    weekly = {sec["name"]: {r["label"]: r["marks"] for r in sec["rows"]} for sec in g["sections"]}
+    sections = []
+    for sec in g["sections"]:
+        rows = []
+        for r in sec["rows"]:
+            marks = []
+            for i, d in enumerate(days):
+                if sec["name"] not in DAY_RULES:                 # nutrition: every day
+                    on = weekly[sec["name"]][r["label"]][wk[i]]
+                else:
+                    want = DAY_RULES[sec["name"]].get(r["label"], set())
+                    week_on = (kind[i] == COMP and sec["name"] != "Nutrition") or weekly[sec["name"]][r["label"]][wk[i]]   # competition days follow the matches
+                    on = (dk[i] in want or d.strftime("%a") in want) and week_on
+                    on = on or (r["label"] == "Goal setting" and ((i == 0 and "first" in want) or (i == n - 1 and "last" in want)))
+                marks.append(bool(on))
+            rows.append({"label": r["label"], "marks": marks})
+        sections.append({"name": sec["name"], "rows": rows})
+
+    def runs(values):
+        out, a = [], 0
+        for i in range(1, n + 1):
+            if i == n or values[i] != values[a]:
+                out.append((a, i - 1, values[a]))
+                a = i
+        return out
+
+    week_pct = [pct_of_week[w] for w in wk]
+    pct = [round(week_pct[i] * DAY_FACTOR[dk[i]], 2) for i in range(n)]
+    load = [DAY_LOADING[dk[i]] + (load_level(pct[i]),) for i in range(n)]
+    macro_of_week = [0] * len(kind_of_week)
+    for a, b, num in g["macros"]:
+        for w in range(a, b + 1):
+            macro_of_week[w] = num
+    spans_years = days[0].year != days[-1].year
+    notes = [
+        "DAY BY DAY: one column per day. Micros groups the days into 7-day microcycles (numbered from the season start); "
+        "the Dates row shows the weekday and the day of the month; the Day row says what kind of day it is.",
+        ("Competition marks the match days in the calendar." if not assumed else
+         f"{len(assumed)} match day(s) are ASSUMED because the calendar has none in those competition weeks"
+         + (" (a match every second day of the tournament)" if short else " (Saturday)") + ". Add the matches in Calendar and download again."),
+        "Percentage is the week's planned load spread over the days by the rule of 60% (Zatsiorsky ch. 5): heavy day 100% of the week's "
+        "value, medium 80%, match practice 70%, light 60%, rest 0. In competition: match day 100%, training day 80%, the day before a "
+        "match 60% (activation, no heavy work), recovery days 50%.",
+        "Preparation weeks: heavy days Monday and Thursday (strength, speed, explosive power while fresh), medium days Tuesday and Friday "
+        "(endurance, technique, tactics), Wednesday light (flexibility, tactical basics, relaxation), Saturday match practice, Sunday rest. "
+        "Transition: active rest on Monday, Wednesday and Friday.",
+        "Competition days: strength only on training days and the day after a match (upper body and trunk); never on a match day or the day "
+        "before. Mental skills follow the matches: concentration and focusing on match days and the day before, relaxation after.",
+        "Each day has its session plan in the Session plan sheets. Percentages and '*' marks are a proposal for the coaches to confirm.",
+    ] + [x for x in g["notes"] if x.startswith(("The whole season is ONE macrocycle", "Volume falls", "Nutrition:"))] + [
+        "Test days: " + ("the fitness-test events in the calendar." if g.get("tests_source") == "calendar" else
+                         "SUGGESTED on the freshest day of each suggested test week (after the rest day); add fitness-test events in Calendar to fix them."
+                         if tests else "none suggested for a tournament: test before it starts."),
+    ] + [x for x in g["notes"] if x.startswith("The season has no phases")]
+    return {
+        "title": g["title"] + " - DAY BY DAY", "squad": g["squad"], "season": g["season"], "weeks": n, "week_starts": days,
+        "periods": [(a, b, v) for a, b, v in runs([PERIOD_OF[k] for k in kind])],
+        "phases": [(a, b, v) for a, b, v in runs(kind)],
+        "mesos": [(a, b, f"{MONTHS[m - 1]} {y}" if spans_years and (a == 0 or m == 1) else MONTHS[m - 1], m)
+                  for a, b, (y, m) in runs([(d.year, d.month) for d in days])],
+        "macros": [(a, b, v) for a, b, v in runs([macro_of_week[w] for w in wk])],
+        "micros": [(a, b, num + 1) for a, b, num in runs(wk)],
+        "kinds": kind, "day_kind_keys": dk, "day_kinds": [DAY_KIND_LABEL[k] for k in dk],
+        "weekdays": [d.strftime("%a") for d in days],
+        "days": [d.day for d in days], "dates": days, "percentage": pct, "week_percentage": week_pct,
+        "hours": ([round(h, 1) if h else None for h in hours] if any(hours) else [PLANNED_HOURS[k] or None for k in dk]),
+        "hours_planned": not any(hours), "hours_label": "day hours",
+        # a tournament: medical check on the first and last day (and on any test day)
+        "medical_days": [d in tests or (short and i in (0, n - 1)) for i, d in enumerate(days)],
+        "match_weeks": [d in mset for d in days], "test_weeks": [d in tests for d in days], "sections": sections,
+        "loading": {"Volume": [x[0] for x in load], "Intensity": [x[1] for x in load], "Load": [x[2] for x in load]},
+        "generated_on": g["generated_on"], "notes": notes, "assumed_matches": bool(assumed), "short": short,
+        "age_group": g["age_group"], "week_of_day": wk,
     }
