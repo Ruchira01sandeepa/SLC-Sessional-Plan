@@ -350,7 +350,6 @@ async function start() {
 
 async function selectSquad(id) {
   S.squad = S.squads.find((s) => s.id === id); S.pid = null;
-  $("#top .mark").textContent = S.squad.age_group || "U15";
   $("#squad").value = id;
   S.seasons = await api(`/squads/${id}/seasons`);
   S.season = S.seasons[0] || null;
@@ -549,8 +548,7 @@ async function playerView(id) {
   await workloadCard(p, wl);
 
   // SLC U15 physical tests (coach, S&C, admin; never players)
-  if (can("coach", "sc_coach", "admin")) { const pc = h("div", { class: "card" }); main.append(pc); await pdpCard(p, pc); }
-  if (can("coach", "sc_coach", "admin")) { const rc = h("div", { class: "card" }); main.append(rc); await roleSkillsCard(p, rc); }
+  // (the Development ratings (PDP) and Role skills cards are not shown on the player page; pdpCard / roleSkillsCard are kept)
   if (can("coach", "sc_coach", "admin")) { const tc = h("div", { class: "card" }); main.append(tc); await testingCard(p, tc); }
 
   // medical (physio only)
@@ -980,13 +978,34 @@ function planRow(row) {
 
 /** A player's seasonal plan (Annual plan · Load · Components · Session), built from their own test results. */
 function playerPlanButton(squadId, pid, cls = "small") {
-  return h("button", { class: cls, onclick: () => (S.season ? downloadFile(`/squads/${squadId}/seasons/${S.season.id}/player-plans/${pid}.xlsx`, "Seasonal-plan.xlsx")
-    : Promise.reject(new Error("Choose a season first"))).catch((x) => toast(x.message)) }, "Download seasonal plan (Excel)");
+  return h("span", { class: "row", style: "display:inline-flex;gap:8px" },
+    h("button", { class: cls, onclick: () => (S.season ? downloadFile(`/squads/${squadId}/seasons/${S.season.id}/player-plans/${pid}.xlsx`, "Seasonal-plan.xlsx")
+      : Promise.reject(new Error("Choose a season first"))).catch((x) => toast(x.message)) }, "Download seasonal plan (Excel)"),
+    playerPeriodizedButton(squadId, pid));
+}
+/** The player's own periodized annual plan (NSCA · Zatsiorsky), built from their test ranks. */
+function playerPeriodizedButton(squadId, pid) {
+  const label = "Periodized plan (NSCA · Zatsiorsky)";
+  return h("button", { class: "small ghost", title: "This player's own year → mesocycle → microcycle → session plan, with formula checks",
+    onclick: (e) => { const b = e.target; if (!S.season) return toast("Choose a season first");
+      b.disabled = true; b.textContent = "Building…";
+      downloadFile(`/squads/${squadId}/seasons/${S.season.id}/periodized-plan/${pid}.xlsx`, "Periodized-plan.xlsx").catch((x) => toast(x.message))
+        .finally(() => { b.disabled = false; b.textContent = label; }); } }, label);
 }
 function allPlayersButton(cls = "small") {
   return h("button", { class: cls, onclick: (e) => { const b = e.target; b.disabled = true; b.textContent = "Preparing every player's plan…";
     downloadFile(`/squads/${S.squad.id}/seasons/${S.season.id}/player-plans.xlsx`, "Seasonal-plans-all-players.xlsx").catch((x) => toast(x.message))
       .finally(() => { b.disabled = false; b.textContent = "All players' plans (one Excel)"; }); } }, "All players' plans (one Excel)");
+}
+
+/** The periodized annual plan (Zatsiorsky & Kraemer + NSCA): year → mesocycles → microcycles → sessions, with formula checks.
+ *  A separate plan beside the seasonal plan; neither replaces the other. */
+function periodizedButton(err) {
+  const label = "Periodized annual plan (NSCA · Zatsiorsky)";
+  return h("button", { class: "ghost", title: "Year → mesocycles → microcycles → sessions, with a Checks sheet (every rule by formula)",
+    onclick: async (e) => { const b = e.target; b.disabled = true; b.textContent = "Building the periodized plan…"; if (err) err.textContent = "";
+      try { await downloadPlan("", "periodized-plan.xlsx"); } catch (x) { if (err) err.textContent = x.message; else toast(x.message); }
+      finally { b.disabled = false; b.textContent = label; } } }, label);
 }
 
 async function downloadPlan(q, file = "seasonal-plan.xlsx") {
@@ -1033,7 +1052,8 @@ async function planTab(rolesParam) {
     h("div", { class: "row" },
       can("coach", "admin") ? h("button", { onclick: async () => { err.textContent = ""; try { const r = await api(`/squads/${S.squad.id}/seasons/${S.season.id}/seasonal-plan/save${rq}`, { method: "POST" }); toast(`Plan saved (${r.new} new, ${r.updated} updated)`); planTab(rolesParam); } catch (x) { err.textContent = x.message; } } }, (plan.saved ? "Re-save " : "Save ") + (plan.category ? "S&C rows" : "plan")) : null,
       h("button", { onclick: async () => { err.textContent = ""; try { await downloadPlan(rq, "seasonal-workbook.xlsx"); } catch (x) { err.textContent = x.message; } } }, "Download seasonal plan (Annual plan · Load · Components · Session)"),
-      allPlayersButton("ghost")),
+      allPlayersButton("ghost"),
+      periodizedButton(err)),
     err,
     h("div", { class: "card" }, h("h3", {}, "Notes"), h("ul", {}, plan.notes.map((n) => h("li", {}, n)))),
     h("div", { class: "card" }, h("h3", {}, "Player groups in this plan"), h("div", { class: "row" }, roleBoxes.map((b) => h("label", { class: "inline" }, b.el, b.v))),
@@ -1288,12 +1308,52 @@ function ageNormsCard(n, ag) {
 
 function areaTable(cat) {
   if (!cat.areas.length) return null;
-  return h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Area", "Test", "Trial 1", "Trial 2", "Trial 3", "Best", "Rank in level", "Area rank", "For age"].map((c) => h("th", {}, c)))),
+  const by = cat.areas.flatMap((a) => a.tests).map((t) => t.goal && t.goal.by).find(Boolean);
+  return h("div", {}, h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Area", "Test", "Trial 1", "Trial 2", "Trial 3", "Best", "For age", "Goal" + (by ? ` (${by})` : ""), "Why"].map((c) => h("th", {}, c)))),
     h("tbody", {}, cat.areas.flatMap((a) => a.tests.map((t, i) => h("tr", {},
       h("td", {}, i === 0 ? a.label : ""), h("td", {}, `${t.label} (${t.unit})`), ...t.trials_display.map((d) => h("td", {}, d ?? "–")), h("td", {}, h("strong", {}, t.display ?? "–")),
-      h("td", {}, t.percentile == null ? "–" : t.percentile), h("td", {}, i === 0 && a.percentile != null ? a.percentile : ""),
       h("td", {}, t.age ? h("span", { class: "chip age-" + t.age.band, title: `${t.age.age_group}: developing ${t.age.developing} · expected ${t.age.expected} · strong ${t.age.strong} ${t.age.unit}` +
-        (t.age.quality === "estimate" ? " (estimate)" : "") }, t.age.label) : "–")))))));
+        (t.age.quality === "estimate" ? " (estimate)" : "") }, t.age.label) : "–"),
+      h("td", {}, t.goal ? h("span", { class: "chip " + GOAL_CHIP[t.goal.kind] }, `${t.goal.display} ${t.goal.unit}`) : "–"),
+      h("td", { class: "sub" }, t.goal ? t.goal.why : "No result yet: test first."))))))),
+    h("p", { class: "sub" }, "Goal = the result to reach at the next test. Focus tests aim for the middle of the group (at least the age group's expected value); " +
+      "never more than 8% better in one window, so the goal stays reachable."));
+}
+const GOAL_CHIP = { focus: "warn", improve: "info", keep: "ok" };
+
+// ───────────── SLC U15 points benchmark (app/benchmark.py) ─────────────
+const BENCH_CLS = { green: "bm-green", light_green: "bm-light", amber: "bm-amber", red: "bm-red" };
+function benchChip(b) {
+  if (!b) return "–";
+  return h("span", { class: "chip " + BENCH_CLS[b.band], title: `${b.band_label}: ${b.total} of ${b.max} points (${b.percent}%)` }, `${b.total} / ${b.max} · ${b.band_label}`);
+}
+
+function benchmarkCard(b) {
+  if (!b) return null;
+  const byArea = (a) => b.tests.filter((t) => t.area === a);
+  return h("div", { class: "card inner" }, h("h3", {}, "SLC U15 benchmark (points)"),
+    h("p", { class: "sub" }, "A fixed standard, the same for every U15 player: the SLC men's / U19 points system adapted to the U15 tests. " +
+      "The ranks above compare with this squad; these points do not."),
+    h("div", { class: "row" }, benchChip(b), b.note ? h("span", { class: "sub" }, b.note) : null),
+    h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Quality", "Test", "Best", "Test points", "Quality points", "Next point at"].map((c) => h("th", {}, c)))),
+      h("tbody", {}, b.areas.flatMap((a) => byArea(a.area).map((t, i) => h("tr", {},
+        h("td", {}, i === 0 ? a.label : ""), h("td", {}, t.label), h("td", {}, t.display ?? "–"),
+        h("td", {}, t.points == null ? "–" : `${t.points} / ${t.max}`),
+        h("td", {}, i === 0 ? h("strong", {}, a.points == null ? "–" : `${a.points} / ${a.max}`) : ""),
+        h("td", {}, t.points == null ? "–" : t.next ? `${t.next.display} ${t.next.unit} → ${t.next.points}` : "Maximum"))))))),
+    h("p", { class: "sub" }, "Strength = the average of push-ups and inverted row. Skinfolds are not used for U15. Bands: green from 31, light green from 26, amber from 20 of 34."));
+}
+
+function benchmarkRefCard(t) {
+  const lim = Math.max(...t.tests.map((x) => x.max));
+  return h("details", { class: "card" }, h("summary", {}, `SLC U15 benchmark · points per test (max ${t.max})`),
+    h("p", { class: "sub" }, `From the SLC men's / U19 points system: shared tests (2 km, 20 m, 5-10-5) use the U19 cut-offs × ${t.age_factor}; ` +
+      "CMJ → broad jump, IMTP → push-ups and inverted row, skinfolds → plank. A proposal: replace with SLC's own U15 data."),
+    h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Test", ...Array.from({ length: lim }, (_, i) => `${lim - i} pts`)].map((c) => h("th", {}, c)))),
+      h("tbody", {}, t.tests.map((x) => h("tr", {}, h("td", {}, `${x.label} (${x.unit}, ${x.better} is better)`),
+        ...Array.from({ length: lim }, (_, i) => { const c = x.cuts.find((k) => k.points === lim - i);
+          return h("td", {}, c ? (x.better === "lower" ? "≤ " : "≥ ") + c.value : ""); })))))),
+    h("p", { class: "sub" }, t.bands.map((b) => `${b.label} from ${b.from}`).join(" · ") + ` of ${t.max} points.`));
 }
 
 const AREA_STATUS = { priority: ["Priority", "warn", "c-s2"], solid: ["Solid", "info", "c-s1"], strength: ["Strength", "ok", "c-s3"], untested: ["Not tested", "", "c-muted"] };
@@ -1675,6 +1735,7 @@ async function testingCard(p, host, window) {
             display: a.percentile == null ? "not ranked" : Charts.num(a.percentile, 1) + (a.percentile < 50 ? " · focus" : ""),
             tip: [a.label, a.percentile == null ? "Not ranked (missing result or small group)" : `Rank ${a.percentile} of 100`, ...a.tests.map((t) => `${t.label}: ${t.display ?? "–"}`)] })) })) : null,
       areaTable(cat),
+      benchmarkCard(cat.benchmark),
       cat.focus_areas.length ? h("p", {}, h("strong", {}, "Focus areas (below the middle): "), cat.focus_areas.map((f) => f.label).join(", ")) : (cat.band ? h("p", {}, "No area is below the middle.") : null),
       h("div", { class: "row" },
         h("button", { class: "small", onclick: () => planPanel(p, planHost, w) }, "Show individual plan"),
@@ -2164,12 +2225,14 @@ async function testingTab() {
       Charts.hbars({ ariaLabel: "Players per focus area", format: (v) => `${v} player${v === 1 ? "" : "s"}`,
         data: focus.map(([label, v]) => ({ label, value: v, cls: "c-s2" })), empty: "No focus areas yet." })));
   main.insertBefore(charts, table);
+  api("/meta/benchmark").then((b) => main.append(benchmarkRefCard(b))).catch(() => {});
   api("/meta/age-norms").then((n) => main.append(ageNormsCard(n, S.squad.age_group || "U15"))).catch(() => {});
   table.replaceChildren(h("h2", {}, `Categories · ${c.window_label}`),
     h("p", { class: "sub" }, `Ranked within the same level only. A band needs ${c.min_cohort}+ players of a level.`),
-    h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Player", "Level", "Band", "Score", "Focus areas", "Readiness"].map((x) => h("th", {}, x)))),
+    h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Player", "Level", "Band", "Score", "U15 points", "Focus areas", "Readiness"].map((x) => h("th", {}, x)))),
       h("tbody", {}, c.players.map((r) => h("tr", { class: "click", onclick: () => { S.pid = r.player_id; S.from = S.tab; go("players"); } },
         h("td", {}, r.player), h("td", {}, r.level_label || "Not tested"), h("td", {}, r.band ? bandChip(r) : "–"), h("td", {}, r.overall ?? "–"),
+        h("td", {}, benchChip(r.benchmark)),
         h("td", {}, r.focus_areas.join(", ") || "–"), h("td", {}, readyChip(r.readiness))))))));
   const twHost = h("div", { class: "card" });
   main.insertBefore(twHost, table.nextSibling);

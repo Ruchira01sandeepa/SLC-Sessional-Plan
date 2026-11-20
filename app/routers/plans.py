@@ -5,15 +5,15 @@ from datetime import date, datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..deps import audit, current_user
-from ..models import (CalendarEvent, DevArea, GoalStatus, PlanItem, PlanLevel, Player, PlayerRole, Scenario, Season,
+from ..models import (CalendarEvent, DevArea, EventType, GoalStatus, PlanItem, PlanLevel, Player, PlayerRole, Scenario, Season,
                       SkillTemplate, SquadStaff, TemplateKind, User, UserRole)
 from ..permissions import authorize_squad
-from ..annual_grid import build_grid
+from ..annual_grid import YEAR_WEEKS, build_grid
 from ..annual_grid_excel import build_grid_workbook
 from ..seasonal_workbook import build_seasonal_workbook
 from ..plan_excel import build_workbook
@@ -217,18 +217,21 @@ def _grid(db: Session, user: User, squad_id: int, season_id: int) -> dict:
         raise HTTPException(404, "Season not found")
     phases, source = _phases_for(season)
     events = []
+    year_end = max(season.end_date, season.start_date + timedelta(days=7 * YEAR_WEEKS - 1))   # the plan covers a whole year
     for e in db.scalars(select(CalendarEvent).where(
             CalendarEvent.squad_id == squad_id, CalendarEvent.start_at >= _utc_naive(season.start_date, False),
-            CalendarEvent.start_at < _utc_naive(season.end_date, True)).order_by(CalendarEvent.start_at)):
+            CalendarEvent.start_at < _utc_naive(year_end, True)).order_by(CalendarEvent.start_at)):
         hours = None
         if e.end_at and e.end_at > e.start_at:
             hours = min((e.end_at - e.start_at).total_seconds() / 3600, 12)       # a stray end date cannot add days of hours
-        events.append({"event_type": e.event_type.value, "date": _local_date(e.start_at), "hours": hours})
+        events.append({"event_type": e.event_type.value, "date": _local_date(e.start_at), "hours": hours, "title": e.title})
     try:
         g = build_grid(squad_name=squad.name, season={"name": season.name, "start_date": season.start_date, "end_date": season.end_date},
-                       phases=phases, events=events, generated_on=datetime.now(LK).date(), age_group=squad.age_group)
+                       phases=phases, events=events, generated_on=datetime.now(LK).date(), age_group=squad.age_group, year=True)
     except ValueError as e:
         raise HTTPException(422, str(e))
+    # "rest" days in the Calendar: no practice, like the Sri Lankan public holidays (weekly_sessions)
+    g["rest_days"] = {ev["date"]: ev.get("title") or "Rest day (Calendar)" for ev in events if ev["event_type"] == "rest"}
     if source == "suggested":
         g["notes"].append("The season has no phases set, so a SUGGESTED split is used. Set the real dates in Admin, Seasons.")
     return g
@@ -266,6 +269,71 @@ def download_seasonal_workbook(squad_id: int, season_id: int, roles: str | None 
     db.commit()
     return Response(build_seasonal_workbook(g, player_roles, bowling or None), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": f'attachment; filename="{name}.xlsx"'})
+
+
+# ───────────── the periodized annual plan (ANNUAL PLAN BUILDER: Zatsiorsky & Kraemer + NSCA), beside the other plans ─────────────
+def _periodized(db: Session, user: User, squad_id: int, season_id: int, perm: str = "plan.squad.read"):
+    """(squad plan, the latest window's sessions by player id) - the squad's periodized plan and the test data behind it."""
+    from ..periodized_plan import YEAR_WEEKS_DEFAULT, build
+    from .testing import _finals, _windows_for
+    squad = authorize_squad(db, user, squad_id, perm)
+    season = db.get(Season, season_id)
+    if season is None or season.squad_id != squad_id:
+        raise HTTPException(404, "Season not found")
+    phases, _source = _phases_for(season)
+    year_end = max(season.end_date, season.start_date + timedelta(days=7 * YEAR_WEEKS_DEFAULT - 1))
+    matches = [{"date": _local_date(e.start_at), "title": e.title} for e in db.scalars(select(CalendarEvent).where(
+        CalendarEvent.squad_id == squad_id, CalendarEvent.event_type == EventType.match,
+        CalendarEvent.start_at >= _utc_naive(season.start_date, False), CalendarEvent.start_at < _utc_naive(year_end, True)))]
+    results: dict[str, list[float]] = {}
+    wins = _windows_for(db, squad_id, season_id)
+    sessions = wins[list(wins)[-1]][1] if wins else {}
+    for sess in sessions.values():
+        for k, v in _finals(sess).items():
+            results.setdefault(k, []).append(v)
+    players = db.scalar(select(func.count()).select_from(Player).where(Player.squad_id == squad_id, Player.is_active)) or 0
+    try:
+        plan = build(squad=squad.name, age_group=squad.age_group or "U15",
+                     season={"name": season.name, "start_date": season.start_date, "end_date": season.end_date},
+                     phases=phases, matches=matches, results=results, players=players)
+    except (ValueError, AssertionError) as e:
+        raise HTTPException(422, f"The periodized plan could not be built for this season: {e}")
+    return plan, sessions
+
+
+@router.get("/squads/{squad_id}/seasons/{season_id}/periodized-plan.xlsx")
+def download_periodized_plan(squad_id: int, season_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Year -> mesocycle -> microcycle -> session plan with its Inputs, Week data, Load chart, Methods by phase, Mesocycles,
+    Microcycles, Conditioning and Resistance detail, Session plans and Checks (every rule recalculated by formula)."""
+    from ..periodized_excel import build_workbook
+    plan, _ = _periodized(db, user, squad_id, season_id)
+    audit(db, user, "periodized_plan.exported", "season", season_id)
+    db.commit()
+    return _xlsx(build_workbook(plan), f"Periodized-annual-plan-{plan['squad']}-{plan['season']['name']}")
+
+
+@router.get("/squads/{squad_id}/seasons/{season_id}/periodized-plan/{player_id}.xlsx")
+def download_player_periodized_plan(squad_id: int, season_id: int, player_id: int, db: Session = Depends(get_db),
+                                    user: User = Depends(current_user)):
+    """One player's periodized annual plan: the squad's plan made personal from the player's own test ranks (weak areas raised
+    with extra work, strong areas keep the full squad work), with the same sheets and the same formula checks."""
+    from ..periodized_excel import build_workbook
+    from ..periodized_plan import personalize
+    from ..session_plans import ROLE_LABEL
+    from ..test_battery import BY_KEY, display
+    from .testing import _finals
+    authorize_squad(db, user, squad_id, "testing.read")
+    pl = db.get(Player, player_id)
+    if pl is None or pl.squad_id != squad_id:
+        raise HTTPException(404, "Player not found in this squad")
+    plan, sessions = _periodized(db, user, squad_id, season_id, "testing.read")
+    own = sessions.get(pl.id)
+    shown = [(BY_KEY[k].label, f"best {display(BY_KEY[k], v)} {BY_KEY[k].unit}") for k, v in (_finals(own).items() if own else []) if k in BY_KEY]
+    plan = personalize(plan, name=pl.full_name, role=ROLE_LABEL.get(pl.role.value, pl.role.value),
+                       areas=_latest_areas(db, squad_id, season_id).get(pl.id, []), own_results=shown)
+    audit(db, user, "periodized_plan.exported", "player", pl.id)
+    db.commit()
+    return _xlsx(build_workbook(plan), f"Periodized-plan-{pl.full_name}-{plan['season']['name']}")
 
 
 # ───────────── players' own seasonal plans, in the supplied workbook's structure ─────────────

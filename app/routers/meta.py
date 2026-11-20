@@ -22,6 +22,13 @@ def age_norms():
                     "Replace with SLC's own percentiles as data builds up."}
 
 
+@router.get("/benchmark")
+def benchmark_table():
+    """The SLC U15 points benchmark (app/benchmark.py): cut-offs per test, maximum points and colour bands."""
+    from ..benchmark import table
+    return table()
+
+
 @router.get("/age-groups")
 def age_groups():
     """The supported age groups and the rules each one applies (app/age_groups.py)."""

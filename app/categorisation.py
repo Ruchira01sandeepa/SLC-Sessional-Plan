@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections import defaultdict
 from statistics import mean
 
+from . import benchmark
 from .test_battery import AREA_LABEL, BY_KEY, areas_for, display
 
 MIN_COHORT = 5                          # same minimum as fitness_metrics.MIN_SQUAD_FOR_PERCENTILE
@@ -71,6 +72,8 @@ def categorise(entries: list[dict]) -> dict[int, dict]:
             elif len(areas) == 1:
                 note = "Only one area is ranked at this level, so the band shows that area only."
             out[e["player_id"]] = {
+                # the SLC U15 points benchmark (benchmark.py): a fixed standard, unlike the ranks, which compare with the group
+                "benchmark": benchmark.score(level, e["finals"], e.get("age_group", "U15"), e.get("gender", "male")),
                 "player_id": e["player_id"], "level": level, "areas": areas, "overall": overall,
                 "band": band, "band_label": BAND_NAMES[band - 1] if band else None,
                 "areas_counted": len(scored), "areas_total": len(areas),

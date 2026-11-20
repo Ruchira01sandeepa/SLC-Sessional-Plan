@@ -213,10 +213,11 @@ def test_workbook_layout_matches_the_supplied_sheet(client, world):
               59: "Load", 60: "Performance index"}
     for row_no, text in labels.items():
         assert ws.cell(row=row_no, column=1).value == text, row_no
-    last = 39 + 1                                                    # week by week, like the supplied sheet: 39 weeks end at AN
-    assert ws["A2"].value.startswith("ANNUAL PLAN FOR WESTERN U15") and "A2:AN2" in {str(m) for m in ws.merged_cells.ranges}
+    # week by week, like the supplied sheet, for a whole year: 52 weeks end at BA (the 39-week season, then the rest of the year)
+    assert ws["A2"].value.startswith("ANNUAL PLAN FOR WESTERN U15") and "A2:BA2" in {str(m) for m in ws.merged_cells.ranges}
+    assert ws["A2"].value.endswith("01 JAN 2027 TO 30 DEC 2027")
     assert ws["B4"].value == "Preparation" and ws["B5"].value == "General preparation" and ws["B6"].value == "January"
-    assert [ws.cell(row=8, column=c).value for c in (2, 3, 40)] == [1, 2, 39]
+    assert [ws.cell(row=8, column=c).value for c in (2, 3, 40, 53)] == [1, 2, 39, 52]
     assert [ws.cell(row=9, column=c).value for c in (2, 3, 4, 5, 6, 7)] == [1, 8, 15, 22, 29, 5]
     assert ws["B10"].value == 0.25 and ws["B10"].number_format == "0%"
     for r_ in (12, 14, 19, 26, 34, 42, 47):
@@ -253,7 +254,7 @@ def test_workbook_uses_calendar_and_phases(client, world):
 def test_no_phases_uses_suggestion_and_says_so(client, world):
     sid = season(client, world)
     g = client.get(f"/squads/{world['squad_a']}/seasons/{sid}/annual-plan", headers=H(world, "coach_a")).json()
-    assert any("SUGGESTED split" in n for n in g["notes"]) and g["weeks"] == 39
+    assert any("SUGGESTED split" in n for n in g["notes"]) and g["weeks"] == 52 and g["year"]
 
 
 def test_access_rules(client, world):
@@ -269,13 +270,14 @@ def test_access_rules(client, world):
 
 
 def test_short_season_is_a_tournament_plan(client, world):
-    """A season under 4 weeks (e.g. a 10-day tournament) gets a plan: one Competition phase, no suggested test weeks."""
+    """A season under 4 weeks (e.g. a 10-day tournament) gets a year plan: the tournament first, then the rest of the year;
+    never a test week during the tournament (tests are at the start of each preparation block)."""
     sid = season(client, world, end_date="2027-01-10")
     r = client.get(f"/squads/{world['squad_a']}/seasons/{sid}/annual-plan.xlsx", headers=H(world, "admin"))
     assert r.status_code == 200
     g = client.get(f"/squads/{world['squad_a']}/seasons/{sid}/annual-plan", headers=H(world, "admin")).json()
-    assert g["weeks"] == 2 and set(g["kinds"]) == {"competition"}
-    assert g["test_weeks"] == [False, False] and g["tests_source"] == "none"
+    assert g["weeks"] == 52 and g["kinds"][:2] == ["competition", "competition"] and g["kinds"][2] == "transition"
+    assert g["test_weeks"][:2] == [False, False] and g["tests_source"] == "suggested" and sum(g["test_weeks"]) == 3
 
 
 def test_short_season_phase_suggestion_is_one_competition_phase():
@@ -332,3 +334,38 @@ def test_tournament_sheet_is_day_by_day():
     assert ws["C12"].value == "*" and ws["C13"].value == "Match"
     long = grid()
     assert long["weeks"] == 39 and long["daily"]["weeks"] == 273         # every season is drawn day by day too
+
+
+# ───────────── the annual plan covers a whole year (52 weeks from the season's start) ─────────────
+def year_grid(start, end, phases=None, events=()):
+    return build_grid(squad_name="Galle U15", season={"name": "T", "start_date": start, "end_date": end},
+                      phases=phases or suggest_phases(start, end), events=list(events), generated_on=start, year=True)
+
+
+def test_tournament_year_runs_competition_transition_preparation_and_pre_competition():
+    s, e = date(2026, 11, 26), date(2026, 12, 5)
+    g = year_grid(s, e, phases=[{"phase_type": "in_season", "start_date": s, "end_date": e}])
+    assert g["weeks"] == 52 and g["week_starts"][-1] == s + timedelta(days=7 * 51) and g["year"]
+    assert [p for _, _, p in g["phases"]] == [COMP, TRANS, GENERAL, SPECIAL, PRECOMP]
+    trans = [b - a + 1 for a, b, p in g["phases"] if p == TRANS][0]
+    pre = [b - a + 1 for a, b, p in g["phases"] if p == PRECOMP][0]
+    assert trans == 3 and pre == 4                                                 # 3 weeks active rest, 4 weeks run-in
+    assert [i for i, m in enumerate(g["match_weeks"]) if m] == [0, 1]              # assumed tournament matches, said in the notes
+    assert any("ASSUMED matches" in n for n in g["notes"]) and "TO 24 NOV 2027" in g["title"]
+    first = {p: a for a, _, p in reversed(g["phases"])}
+    assert {w for w, t in enumerate(g["test_weeks"]) if t} == {first[GENERAL], first[SPECIAL], first[PRECOMP]}
+    assert max(g["percentage"]) == PEAK and not g["daily"]["short"] and g["daily"]["weeks"] == 364   # drawn week by week
+
+
+def test_long_season_year_gets_its_own_second_preparation():
+    g = year_grid(date(2027, 1, 1), date(2027, 9, 30))
+    kinds = [p for _, _, p in g["phases"]]
+    assert kinds[:2] == [GENERAL, SPECIAL] and kinds[-3:] == [GENERAL, SPECIAL, PRECOMP]   # each preparation is split on its own
+    ramps = [g["percentage"][a] for a, _, p in g["phases"] if p == GENERAL]
+    assert ramps == [0.25, 0.25]                                                   # each preparation ramps from the start
+    assert g["notes"][0].startswith("The plan covers ONE YEAR")
+
+
+def test_year_never_shortens_a_season_longer_than_a_year():
+    g = year_grid(date(2027, 1, 1), date(2028, 2, 28))
+    assert g["weeks"] == 61 and not any("transition (3 weeks" in n for n in g["notes"])

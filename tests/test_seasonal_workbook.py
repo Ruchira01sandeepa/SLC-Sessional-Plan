@@ -167,23 +167,30 @@ def test_workbook_sheets():
     """Exactly the supplied workbook: four sheets in its order, one column per week."""
     g = grid()
     wb = openpyxl.load_workbook(io.BytesIO(build_seasonal_workbook(g, ROLES)))
-    assert wb.sheetnames == SHEETS == ["Annual plan", "Load distribution", "Component distribution", "Session plan"]
+    assert wb.sheetnames[:5] == SHEETS == ["Annual plan", "Load distribution", "Component distribution", "Session plan", "Charts"]
+    weeks = wb.sheetnames[5:]                                           # then one sheet per week, Monday to Friday
+    assert weeks[0] == "Dec W4 2026" and "Jan W2 2027" in weeks                 # Fri 1 Jan 2027 is in the week of Mon 28 Dec and len(weeks) == len(set(weeks)) >= 39
     a = wb["Annual plan"]
     assert a.max_column == g["weeks"] + 1 and a["A6"].value == "Mesos" and a["A7"].value == "Macros" and a["A60"].value == "Performance index"
     assert a.max_row == 60                                              # ends at Performance index, as the supplied sheet does
-    ws = wb["Session plan"]
-    assert ws["A2"].value == "SESSION PLAN FOR LOWER BODY" and "A2:G3" in {str(m) for m in ws.merged_cells.ranges}
-    assert [ws.cell(row=r, column=1).value for r in range(7, 15)] == ["TOPIC", "PERIOD", "STAGE", "MESO", "MICRO", "EQUIPMENTS", "DURATION", "TRAINING UNIT"]
-    assert [ws[c].value for c in ("A15", "B15", "C15", "F15", "G15", "C16", "D16", "E16")] == ["PART", "DESCRIPTION", "DOSIFICATION", "ORGANIZATION", "REST", "TIME", "REP", "SET"]
-    assert {"C15:E15", "A15:A16", "F15:F16"} <= {str(m) for m in ws.merged_cells.ranges}
-    col_a = [ws.cell(row=r, column=1).value for r in range(17, ws.max_row + 1)]
-    assert [x for x in col_a if x] == ["INITIAL PART", "MAIN PART", "FINAL PART"]
-    desc = [ws.cell(row=r, column=2).value for r in range(17, ws.max_row + 1)]
-    for x in ("WARM UP", "Stretch", "Neck Stretch(R/L)", "Hypertrophy program", "Back Squat", "MACRO REST 3 MIN", "Crunches", "Left Plank", "WARM DOWN", "Ice bath"):
-        assert x in desc, x
-    assert desc.index("Stretch") < desc.index("Hypertrophy program") < desc.index("Crunches") < desc.index("WARM DOWN")
-    squat = 17 + desc.index("Back Squat")
-    assert [ws.cell(row=squat, column=c).value for c in (4, 5)] == ["12,10,10,8,8", "5"]
+    assert a["B9"].hyperlink.location == "'Dec W4 2026'!A1"            # a week's date opens its session sheet
+    idx = wb["Session plan"]
+    links = [idx.cell(row=r, column=1).hyperlink.location for r in range(5, idx.max_row + 1) if idx.cell(row=r, column=1).hyperlink]
+    assert links and all(l.split("'")[1] in weeks for l in links)     # the week list: every week opens its sheet
+    ws = wb["Jan W2 2027"]
+    assert ws["A1"].hyperlink.location == "'Session plan'!A1"
+    col_a = [ws.cell(row=r, column=1).value for r in range(1, ws.max_row + 1)]
+    assert col_a.count("TOPIC") == 5 and col_a.count("TRAINING UNIT") == 5 and col_a.count("PART") == 5   # five days, the supplied layout
+    assert [c for c in col_a if c in ("TOPIC", "PERIOD", "STAGE", "MESO", "MICRO", "EQUIPMENTS", "DURATION", "TRAINING UNIT")][:8] == [
+        "TOPIC", "PERIOD", "STAGE", "MESO", "MICRO", "EQUIPMENTS", "DURATION", "TRAINING UNIT"]
+    titles = [str(c) for c in col_a if str(c).startswith(("MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"))]
+    assert titles[1].startswith("TUESDAY 12 JAN 2027 - WITH THE TRAINER") and titles[0].startswith("MONDAY 11 JAN 2027 - SCHOOL")
+    assert "NO PRACTICE: TAMIL THAI PONGAL DAY" in titles[4]                                             # Fri 15 Jan 2027
+    first = col_a.index("PART") + 1                                     # list position -> sheet row
+    assert [ws.cell(row=first, column=c).value for c in (2, 3, 6, 7)] == ["DESCRIPTION", "DOSIFICATION", "ORGANIZATION", "REST"]
+    assert [ws.cell(row=first + 1, column=c).value for c in (3, 4, 5)] == ["TIME", "REP", "SET"]
+    assert ws.cell(row=first + 2, column=1).value == "INITIAL PART" and ws.cell(row=first + 2, column=3).value.endswith("MIN")
+    assert len(wb["Charts"]._charts) == 4
     load = wb["Load distribution"]
     assert [load.cell(row=r, column=1).value for r in (10, 12, 13, 15, 17, 19, 22)] == [
         "Session(Percentage)", "100m", "Anaerobic endurance(speed)", "Interval run 120m", "Interval run 150m", "Interval run 300m", "Total meter"]
@@ -207,13 +214,33 @@ def test_running_block_follows_the_phases():
     k, n = g["kinds"], g["weeks"]
     ld = build_interval_loads(g)
     gen = [w for w in range(n) if k[w] == GENERAL]
-    on = [w for w in range(n) if ld["total"][w]]
-    assert on[0] == gen[-2] and not any(k[w] == TRANS for w in on)                     # last 2 general weeks to competition
-    assert not any(ld["runs"][300][w] for w in range(n) if k[w] == COMP)                 # no 300 m in competition
-    assert ld["speed_100m"][gen[-1]] == 0.80 and max(v or 0 for v in ld["speed_100m"]) == 1.0
+    assert all(ld["total"][w] and ld["speed_100m"][w] for w in range(n))                  # every week is filled, every phase
+    assert all(ld["speed_endurance_reps"][w] for w in range(n) if k[w] != TRANS)          # row 13 too (transition: speed games)
+    assert ld["speed_endurance_m"][gen[0]] == 60 and max(ld["speed_endurance_m"][w] or 0 for w in range(n)) == 100   # short runs only
+    assert all(ld["runs"][300][w] <= 2 for w in range(n) if k[w] == TRANS)                # transition: 300 m at easy pace only
+    assert ld["speed_100m"][gen[0]] == 0.75 and ld["speed_100m"][gen[-1]] == 0.80 and max(v or 0 for v in ld["speed_100m"]) == 1.0
     spec = [ld["total"][w] for w in range(n) if k[w] == SPECIAL]
     comp = [ld["total"][w] for w in range(n) if k[w] == COMP]
-    assert max(spec) > max(comp)                                                          # volume falls toward competition
+    trans = [ld["total"][w] for w in range(n) if k[w] == TRANS]
+    assert max(spec) > max(comp) > max(trans)                                             # volume falls toward competition
+    assert [f["area"] for f in ld["focus"]] == ["power", "upper_strength", "core", "agility"]
+
+
+def test_each_player_load_follows_their_own_weaknesses():
+    from app.player_season_plan import personal_grid
+    g = grid()
+    k, n = g["kinds"], g["weeks"]
+    weak = personal_grid(g, name="A", role="Batter", areas=[{"area": a, "label": a, "percentile": 10.0}
+                                                             for a in ("endurance", "speed", "power", "upper_strength", "core", "agility")])
+    strong = personal_grid(g, name="B", role="Batter", areas=[{"area": a, "label": a, "percentile": 90.0}
+                                                               for a in ("endurance", "speed", "power", "upper_strength", "core", "agility")])
+    sq, w_, s_ = build_interval_loads(g), build_interval_loads(weak), build_interval_loads(strong)
+    assert all((w_["runs"][120][w] or 0) == (sq["runs"][120][w] or 0) + 1 for w in range(n) if sq["runs"][120][w])
+    assert all(w_["runs"][300][w] == sq["runs"][300][w] + 1 for w in range(n) if k[w] in (GENERAL, SPECIAL) and sq["runs"][300][w])
+    assert all(w_["speed_endurance_reps"][w] == sq["speed_endurance_reps"][w] + 2 for w in range(n) if k[w] in (SPECIAL, COMP))
+    for f_sq, f_w in zip(sq["focus"], w_["focus"]):
+        assert f_w["weak"] and sum(v or 0 for v in f_w["values"]) > sum(v or 0 for v in f_sq["values"]), f_sq["area"]
+    assert s_["runs"] == sq["runs"] and s_["focus"] == [{**f, "weak": False} for f in sq["focus"]]   # strong: the full squad work
 
 
 def test_sheet_names_are_unique_even_when_clashing():
@@ -225,11 +252,15 @@ def test_exercise_text_is_never_a_formula():
     import re
     wb = openpyxl.load_workbook(io.BytesIO(build_seasonal_workbook(grid(), ["fast_bowler"])))
     # the only formulas are the load sheet's own arithmetic (linked % row, total metres), in fixed shapes
-    allowed = {10: r"='Annual plan'!([A-Z]+)10", 22: r"=N\([A-Z]+15\)\*120\+N\([A-Z]+17\)\*150\+N\([A-Z]+19\)\*300"}
+    allowed = {10: r"='Annual plan'!([A-Z]+)10",
+               22: r"=N\([A-Z]+15\)\*120\+N\([A-Z]+17\)\*150\+N\([A-Z]+19\)\*300(\+N\([A-Z]+13\)\*(30|50|60|100))?"}
     for ws in wb:
         for row in ws.iter_rows():
             for c in row:
                 if isinstance(c.value, str):
+                    if ws.title == "Session plan" and c.data_type == "f":                 # the week look-up (INDEX / MATCH only)
+                        assert re.fullmatch(r"=(IFERROR\(|IF\(\$?I).*", c.value) and "INDIRECT" not in c.value, (c.coordinate, c.value)
+                        continue
                     if ws.title == "Load distribution" and c.row in allowed and c.column > 1 and c.data_type == "f":
                         assert re.fullmatch(allowed[c.row], c.value), (c.coordinate, c.value)
                         continue
@@ -247,9 +278,9 @@ def test_endpoint_uses_squad_roles(client, world):
     sid = make_season(client, world)
     r = client.get(f"/squads/{world['squad_a']}/seasons/{sid}/seasonal-workbook.xlsx", headers=H(world, "coach_a"))
     assert r.status_code == 200 and "seasonal-plan-workbook-Western-U15-2027.xlsx" in r.headers["content-disposition"]
-    assert openpyxl.load_workbook(io.BytesIO(r.content)).sheetnames == SHEETS
+    assert openpyxl.load_workbook(io.BytesIO(r.content)).sheetnames[:5] == SHEETS
     r = client.get(f"/squads/{world['squad_a']}/seasons/{sid}/seasonal-workbook.xlsx?roles=batter,all_rounder", headers=H(world, "admin"))
-    assert r.status_code == 200 and openpyxl.load_workbook(io.BytesIO(r.content)).sheetnames == SHEETS
+    assert r.status_code == 200 and openpyxl.load_workbook(io.BytesIO(r.content)).sheetnames[:5] == SHEETS
     assert client.get(f"/squads/{world['squad_a']}/seasons/{sid}/seasonal-workbook.xlsx?roles=captain", headers=H(world, "admin")).status_code == 422
 
 
@@ -279,3 +310,31 @@ def test_endpoint_includes_calendar_matches_and_no_medical_text(client, world, d
     assert wb["Annual plan"].cell(row=12, column=w + 2).value == "*"
     text = " ".join(str(c.value) for ws in wb for row in ws.iter_rows() for c in row if c.value is not None)
     assert "SECRET" not in text
+
+
+# ───────────── the week's session plans (Tue / Wed trainer, Mon / Thu / Fri school, no practice on public holidays) ─────────────
+def test_week_sessions_follow_the_practice_week_and_holidays():
+    from app.weekly_sessions import TABLE_LINES, build_weeks
+    g = grid()
+    W = build_weeks(g, roles=ROLES)
+    days = [d for wk in W["weeks"] for d in wk["days"] if d["kind"] != "outside"]
+    by_date = {d["date"]: d for d in days}
+    assert by_date[date(2027, 1, 15)]["kind"] == "holiday" and not by_date[date(2027, 1, 15)]["rows"][0]["time"]   # Thai Pongal
+    assert by_date[date(2027, 3, 22)]["kind"] == "holiday" and "Medin" in by_date[date(2027, 3, 22)]["title"]        # gazette date
+    assert all(d["kind"] in ("trainer", "holiday", "match", "prematch", "recovery") for d in days if d["date"].weekday() in (1, 2))
+    assert all(d["kind"] in ("school", "holiday", "match", "prematch", "recovery") for d in days if d["date"].weekday() in (0, 3, 4))
+    assert all(len(d["rows"]) <= TABLE_LINES for d in days)
+    tue = by_date[date(2027, 1, 12)]
+    assert tue["kind"] == "trainer" and any(r["desc"].startswith("100 m runs") for r in tue["rows"]) and 90 <= tue["minutes"] <= 130
+    assert W["weeks"][2]["label"] == "January week 2 (11-15 Jan 2027)"
+
+
+def test_a_players_week_carries_their_focus_and_calendar_rest_days():
+    from app.player_season_plan import personal_grid
+    from app.weekly_sessions import build_weeks
+    pg = personal_grid(grid(), name="A", role="Batter", areas=[{"area": "core", "label": "Core", "percentile": 10.0}])
+    W = build_weeks(pg, roles=["batter"], extra_off={date(2027, 1, 18): "School sports meet"})
+    days = {d["date"]: d for wk in W["weeks"] for d in wk["days"]}
+    assert any("FOCUS" in r["desc"] for r in days[date(2027, 1, 11)]["rows"])                      # Monday homework: core focus
+    assert days[date(2027, 1, 18)]["kind"] == "holiday" and "School sports meet" in days[date(2027, 1, 18)]["title"]
+    assert all(r["desc"].startswith("[Batter]") for d in days.values() for r in d["rows"] if r["desc"].startswith("["))

@@ -4,15 +4,17 @@ Session plan), built from the squad's grid and the player's OWN test ranks. Pure
 How a player's plan differs from the squad plan (each area is the mean percentile of that area's tests, latest window):
   * WEAK area (below the 50th percentile): its rows are trained in every week (or training day) of each phase in which the squad
     plan trains them at all, except lighter recovery weeks - the developing emphasis.
-  * STRONG area (75th percentile or more): its rows keep every second mark of the squad plan - retained with less work
-    (Zatsiorsky: a retained ability needs less volume than one being developed).
+  * STRONG area (75th percentile or more): its rows keep ALL the squad plan's work, so a strength keeps improving (never cut).
   * Others follow the squad plan.
-  * Weak endurance adds one rep to the 120 m and 150 m interval runs.
+  * The player's own Load distribution sheet (load_distribution.build_interval_loads) adds the extra work for the weak areas:
+    endurance +1 rep of 120 m and 150 m and +1 x 300 m in preparation; speed +2 speed-endurance reps; leg power, upper-body
+    strength, core and agility get their development extra in the rows under the running block.
 Rows a test area maps to are in AREA_ROWS. Phases where the squad plan never trains a row are never filled, so a player's plan
 never adds work the season's phase does not allow (for example no endurance block in competition)."""
 from __future__ import annotations
 
 import copy
+from datetime import timedelta
 
 WEAK, STRONG = 50, 75
 AREA_ROWS: dict[str, list[tuple[str, str]]] = {
@@ -54,17 +56,7 @@ def _personalise(grid: dict, weak_rows: set, strong_rows: set) -> None:
                 phases = {kinds[i] for i in range(n) if marks[i]}
                 row["marks"] = [marks[i] or (kinds[i] in phases and not light[i] and not off[i])
                                 or (key in RECOVERY_DOSE_ROWS and kinds[i] == "competition" and dk[i] in RECOVERY_DAYS) for i in range(n)]
-            elif key in strong_rows:
-                seen: dict[str, int] = {}
-                out = []
-                for i in range(n):
-                    keep = False
-                    if marks[i]:
-                        c = seen.get(kinds[i], 0)
-                        seen[kinds[i]] = c + 1
-                        keep = c % 2 == 0
-                    out.append(keep)
-                row["marks"] = out
+            # a STRONG area keeps the squad plan's full work, so it keeps improving (it is never cut)
 
 
 def personal_grid(g: dict, *, name: str, role: str, areas: list[dict]) -> dict:
@@ -79,6 +71,9 @@ def personal_grid(g: dict, *, name: str, role: str, areas: list[dict]) -> dict:
     for grid in [out] + ([out["daily"]] if out.get("daily") else []):
         _personalise(grid, weak_rows, strong_rows)
         grid["title"] = f"ANNUAL PLAN FOR {name.upper()} ({role}) - FOCUS: {focus.upper()}"
+        if g.get("year"):
+            ws = g["week_starts"]
+            grid["title"] += f" - {ws[0]:%d %b %Y} TO {ws[-1] + timedelta(days=6):%d %b %Y}".upper()
         # Performance index: the player's own test ranks (percentile, weakest first) from the first column, "re-test" in later test columns
         ranks = [f"{SHORT[a['area']]} {round(a['percentile'])}" for a in sorted(
             (a for a in areas if a.get("percentile") is not None and a["area"] in SHORT), key=lambda a: a["percentile"])]

@@ -129,9 +129,49 @@ def _mark(rule: str | None, idx: int, recovery: bool) -> bool:
     return rule == "all" or (rule == "alt" and idx % 2 == 0) or (rule == "non_recovery" and not recovery)
 
 
-def build_grid(*, squad_name: str, season: dict, phases: list[dict], events: list[dict], generated_on: date, age_group: str | None = None) -> dict:
+YEAR_WEEKS = 52                 # the annual plan covers a whole year (52 weeks, 364 days) from the season's start date
+YEAR_TRANSITION_DAYS = 21       # after the season: 3 weeks of transition (active rest), unless the season already ends with one
+YEAR_PRECOMP_DAYS = 28          # the year's last 4 weeks: pre-competition, the run-in to next year's season
+
+
+def year_phases(s0: date, e0: date, phases: list[dict], weeks: int = YEAR_WEEKS) -> tuple[date, list[dict]]:
+    """The season's phases followed by the rest of the year: transition after the competition, general and special
+    preparation, then pre-competition into next year's season (Zatsiorsky ch. 5: one annual cycle ends where the next
+    competition period begins). Returns (last day of the year, phases)."""
+    y_end = s0 + timedelta(days=7 * weeks - 1)
+    phases = sorted(phases, key=lambda p: p["start_date"])
+    if e0 >= y_end:
+        return e0, phases
+    out, cur = list(phases), e0 + timedelta(days=1)
+    left = (y_end - cur).days + 1
+
+    def add(kind: str, days: int):
+        nonlocal cur, left
+        if days <= 0:
+            return
+        end = cur + timedelta(days=days - 1)
+        if out and out[-1]["phase_type"] == kind and out[-1]["end_date"] == cur - timedelta(days=1):
+            out[-1] = {**out[-1], "end_date": end}               # carries on the season's own last phase
+        else:
+            out.append({"phase_type": kind, "start_date": cur, "end_date": end, "added": True})
+        cur, left = end + timedelta(days=1), left - days
+
+    trans = 0 if phases[-1]["phase_type"] == "transition" else min(YEAR_TRANSITION_DAYS, left)
+    if left - trans < 14:                                        # too little left for a preparation: it is all transition
+        trans = left
+    add("transition", trans)
+    pre = YEAR_PRECOMP_DAYS if left >= 2 * YEAR_PRECOMP_DAYS else 0
+    add("pre_season", left - pre)
+    add("pre_competition", pre)
+    return y_end, out
+
+
+def build_grid(*, squad_name: str, season: dict, phases: list[dict], events: list[dict], generated_on: date, age_group: str | None = None,
+               year: bool = False) -> dict:
     """season: {name, start_date, end_date}. phases: [{phase_type, start_date, end_date}] using the season phase names
-    (pre_season, pre_competition, in_season, transition). events: [{event_type, date, hours|None}]."""
+    (pre_season, pre_competition, in_season, transition). events: [{event_type, date, hours|None}].
+    year=True: the plan covers a whole year (YEAR_WEEKS weeks) from the season's start; the weeks after the season follow
+    year_phases(). Otherwise it covers the season only."""
     s0, e0 = season["start_date"], season["end_date"]
     prof = age_profile(age_group)
     peak = prof.load_peak
@@ -140,20 +180,30 @@ def build_grid(*, squad_name: str, season: dict, phases: list[dict], events: lis
     if not phases:
         raise ValueError("The season has no phases")
     phases = sorted(phases, key=lambda p: p["start_date"])
+    season_end = e0
+    short = (e0 - s0).days + 1 < SHORT_SEASON_DAYS                    # the season itself is a tournament
+    if year:
+        e0, phases = year_phases(s0, e0, phases)
+        season = {**season, "end_date": e0}
     n = _weeks(s0, e0)
     starts = [s0 + timedelta(days=7 * i) for i in range(n)]
 
     # --- which phase is each week in (general / special preparation split inside pre-season) ---
     base = [_phase_for(d, phases)["phase_type"] for d in starts]
-    pre_idx = [i for i, t in enumerate(base) if t == "pre_season"]
-    m = len(pre_idx)
-    n_gen = m if m <= 1 else max(1, min(m - 1, round(m * GENERAL_SHARE)))
-    kind = []
-    for i, t in enumerate(base):
-        if t == "pre_season":
-            kind.append(GENERAL if pre_idx.index(i) < n_gen else SPECIAL)
-        else:
-            kind.append({"pre_competition": PRECOMP, "in_season": COMP, "transition": TRANS}[t])
+    kind = [{"pre_season": GENERAL, "pre_competition": PRECOMP, "in_season": COMP, "transition": TRANS}[t] for t in base]
+    i = 0
+    while i < n:                                                 # each preparation block (a year can have two) is split on its own
+        if base[i] != "pre_season":
+            i += 1
+            continue
+        j = i
+        while j + 1 < n and base[j + 1] == "pre_season":
+            j += 1
+        m = j - i + 1
+        n_gen = m if m <= 1 else max(1, min(m - 1, round(m * GENERAL_SHARE)))
+        for w in range(i + n_gen, j + 1):
+            kind[w] = SPECIAL
+        i = j + 1
 
     # --- macro blocks: never cross a phase boundary; a one-week leftover joins the block before it ---
     macro = [0] * n
@@ -182,8 +232,15 @@ def build_grid(*, squad_name: str, season: dict, phases: list[dict], events: lis
     pct = [0.0] * n
     prep = [w for w in range(n) if kind[w] in (GENERAL, SPECIAL)]
     loading_weeks = [w for w in prep if not recovery[w]]
-    for k, w in enumerate(loading_weeks):
-        pct[w] = round(START + (peak - START) * (k / (len(loading_weeks) - 1) if len(loading_weeks) > 1 else 0), 2)
+    ramps: list[list[int]] = []                                  # each preparation block ramps from START to the peak on its own
+    for w in loading_weeks:
+        if ramps and all(kind[x] in (GENERAL, SPECIAL) for x in range(ramps[-1][-1], w + 1)):
+            ramps[-1].append(w)
+        else:
+            ramps.append([w])
+    for ramp in ramps:
+        for k, w in enumerate(ramp):
+            pct[w] = round(START + (peak - START) * (k / (len(ramp) - 1) if len(ramp) > 1 else 0), 2)
     for w in prep:
         if recovery[w]:
             prev = max((x for x in loading_weeks if x < w), default=None)
@@ -210,14 +267,18 @@ def build_grid(*, squad_name: str, season: dict, phases: list[dict], events: lis
         if ev["event_type"] in ("training", "match") and ev.get("hours"):
             hours[w] += ev["hours"]
     tests_source = "calendar"
-    short = (e0 - s0).days + 1 < SHORT_SEASON_DAYS
-    if not tests and short:                                     # a tournament: test before it, not during it
+    if not tests and short and year:                            # a tournament, then the year: test at the start of each preparation block
+        tests_source = "suggested"
+        tests = {next((w for w in range(n) if kind[w] == k), None) for k in (GENERAL, SPECIAL, PRECOMP)} - {None}
+    elif not tests and short:                                   # a tournament: test before it, not during it
         tests_source = "none"
     elif not tests:                                             # same suggested times as the seasonal plan's testing schedule
         tests_source = "suggested"
         mid_ph = next((p for p in phases if p["phase_type"] == "in_season"), None)
-        mid = (mid_ph["start_date"] + (mid_ph["end_date"] - mid_ph["start_date"]) / 2) if mid_ph else s0 + (e0 - s0) / 2
-        tests = {0, week_of(mid), n - 1} - {None}
+        mid = (mid_ph["start_date"] + (mid_ph["end_date"] - mid_ph["start_date"]) / 2) if mid_ph else s0 + (season_end - s0) / 2
+        tests = {0, week_of(mid), week_of(season_end)} - {None}
+        if year:                                                 # and before next year's season
+            tests.add(next((w for w in range(n) if kind[w] == PRECOMP and starts[w] > season_end), n - 1))
 
     # --- rows of marks ---
     sections = []
@@ -293,7 +354,26 @@ def build_grid(*, squad_name: str, season: dict, phases: list[dict], events: lis
             + "; ".join(f"{k} - {v}" for k, v in NUTRITION_FOCUS.items()) + ".",
         ],
     }
-    g["daily"] = build_daily(g, season=season, phases=phases, events=events, kind_of_week=kind, pct_of_week=pct, short=short)
+    g["daily"] = build_daily(g, season=season, phases=phases, events=events, kind_of_week=kind, pct_of_week=pct, short=short,
+                             season_end=season_end, draw_daily=short and not year)
+    if year:
+        g["year"], g["season_last_day"] = True, season_end         # season_end stays the plan's last day (the end of the year)
+        g["title"] = f"ANNUAL PLAN FOR {squad_name.upper()} ({season['name']}) - {s0:%d %b %Y} TO {e0:%d %b %Y}".upper()
+        after = ("then transition (3 weeks of active rest unless the season ends with one), general and special preparation, and "
+                 "4 weeks of pre-competition into next year's season. The weeks after the season are a PROPOSAL; set real dates in "
+                 "Admin, Seasons. " if any(p.get("added") for p in phases) else "")
+        g["notes"][0] = ("The plan covers ONE YEAR (52 weeks) from the season's start: the season's own phases, " + after +
+                         "The Mesos row shows the calendar months; the numbered blocks in the Macros row are the training blocks.")
+        if not matches and g["daily"]["assumed_matches"]:        # no match in the calendar: show the assumed match weeks
+            d = g["daily"]
+            cnt = [0] * n
+            for i, on in enumerate(d["match_weeks"]):
+                if on:
+                    cnt[d["week_of_day"][i]] += 1
+            g["match_weeks"], g["match_counts"] = [c > 0 for c in cnt], cnt
+            g["notes"].append("Competition: no matches are in the calendar, so the competition weeks show ASSUMED matches"
+                              + (" (a match every second day of the tournament)." if short else " (Saturdays).")
+                              + " Add the matches in Calendar and download again.")
     if not any(g["hours"]):                                     # no session times in the calendar: the planned hours of the week's days
         d = g["daily"]
         g["hours"] = [round(sum(d["hours"][i] or 0 for i in range(d["weeks"]) if d["week_of_day"][i] == w), 1) or None for w in range(n)]
@@ -345,10 +425,13 @@ DAY_LOADING = {"heavy": ("High", "Medium"), "medium": ("High", "low"), "light": 
 
 
 def build_daily(g: dict, *, season: dict, phases: list[dict], events: list[dict], kind_of_week: list[str], pct_of_week: list[float],
-                short: bool = False) -> dict:
+                short: bool = False, season_end: date | None = None, draw_daily: bool | None = None) -> dict:
     """The season with one column per day. Competition days follow the match days (Zatsiorsky ch. 5: the competition microcycle
-    matches the competition); preparation and transition weeks follow a weekly microcycle template with the load varied day to day."""
+    matches the competition); preparation and transition weeks follow a weekly microcycle template with the load varied day to day.
+    short: the season is a tournament (matches assumed every second day). season_end: the season's last day when the grid runs
+    past it (a year plan). draw_daily: whether the sheets are drawn day by day (the "short" key); defaults to short."""
     s0, e0 = season["start_date"], season["end_date"]
+    last = season_end or e0
     days = [s0 + timedelta(days=i) for i in range((e0 - s0).days + 1)]
     n = len(days)
     wk = [(d - s0).days // 7 for d in days]
@@ -461,9 +544,10 @@ def build_daily(g: dict, *, season: dict, phases: list[dict], events: list[dict]
         "hours": ([round(h, 1) if h else None for h in hours] if any(hours) else [PLANNED_HOURS[k] or None for k in dk]),
         "hours_planned": not any(hours), "hours_label": "day hours",
         # a tournament: medical check on the first and last day (and on any test day)
-        "medical_days": [d in tests or (short and i in (0, n - 1)) for i, d in enumerate(days)],
+        "medical_days": [d in tests or (short and d in (s0, last)) for i, d in enumerate(days)],
         "match_weeks": [d in mset for d in days], "test_weeks": [d in tests for d in days], "sections": sections,
         "loading": {"Volume": [x[0] for x in load], "Intensity": [x[1] for x in load], "Load": [x[2] for x in load]},
-        "generated_on": g["generated_on"], "notes": notes, "assumed_matches": bool(assumed), "short": short,
+        "generated_on": g["generated_on"], "notes": notes, "assumed_matches": bool(assumed),
+        "short": short if draw_daily is None else draw_daily, "tournament": short,
         "age_group": g["age_group"], "week_of_day": wk,
     }

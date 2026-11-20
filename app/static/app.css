@@ -71,6 +71,9 @@ ul{padding-left:1.2em;margin:.3em 0}
 
 .chip.stop{background:#f8dcdc;color:#8a1f1f}.chip.warn{background:#fff0cc;color:#6b4a00}.chip.info{background:#dcebfa;color:#12406b}.chip.ok{background:#e3f2e1;color:#1f5c2a}
 @media (prefers-color-scheme:dark){.chip.stop{background:#4a2121;color:#f0a8a8}.chip.warn{background:#463c14;color:#ecd47a}.chip.info{background:#1d3550;color:#a8cdf0}.chip.ok{background:#1f3a22;color:#9fd8a4}}
+/* SLC U15 benchmark bands: the source sheet's green / light green / amber / red */
+.chip.bm-green{background:#cfe9c8;color:#1d5a17}.chip.bm-light{background:#e6f6d6;color:#3c6b12}.chip.bm-amber{background:#ffe6b0;color:#6b4a00}.chip.bm-red{background:#f8d0d0;color:#8a1f1f}
+@media (prefers-color-scheme:dark){.chip.bm-green{background:#1f4a1c;color:#a6e09d}.chip.bm-light{background:#2c3f1a;color:#c8e8a0}.chip.bm-amber{background:#4a3a12;color:#f0d27a}.chip.bm-red{background:#4f2020;color:#f2a8a8}}
 .item.alert{align-items:flex-start;gap:8px}
 tr.click{cursor:pointer}
 .card.inner{background:transparent}

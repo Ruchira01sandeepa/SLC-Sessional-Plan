@@ -28,7 +28,7 @@ AREAS = [{"area": "speed", "label": "Speed", "percentile": 22.0}, {"area": "endu
          {"area": "core", "label": "Core", "percentile": 60.0}]
 
 
-def test_weak_areas_get_more_work_strong_areas_less():
+def test_weak_areas_get_more_work_strong_areas_keep_the_full_squad_work():
     g = grid()
     pg = personal_grid(g, name="Kasun Perera", role="Fast bowler", areas=AREAS)
     k, light = g["kinds"], g["recovery_weeks"]
@@ -36,7 +36,7 @@ def test_weak_areas_get_more_work_strong_areas_less():
     phases = {k[w] for w in range(g["weeks"]) if squad_speed[w]}
     assert all(own_speed[w] for w in range(g["weeks"]) if k[w] in phases and not light[w])            # weak: every week of its phases
     assert not any(own_speed[w] for w in range(g["weeks"]) if k[w] not in phases)                     # never outside the phase rules
-    assert sum(row(pg, "Physical", "Endurance")) < sum(row(g, "Physical", "Endurance"))                # strong: retained with less
+    assert row(pg, "Physical", "Endurance") == row(g, "Physical", "Endurance")                         # strong: never cut, keeps improving
     assert row(pg, "Physical", "Coordination") == row(g, "Physical", "Coordination")                   # middle: as the squad
     assert pg["title"] == "ANNUAL PLAN FOR KASUN PERERA (Fast bowler) - FOCUS: SPEED"
     assert pg["performance"][:3] == ["SPD 22", "CORE 60", "END 88"]                                    # own ranks, weakest first
@@ -55,8 +55,8 @@ def test_player_workbook_has_the_four_sheets_and_extra_reps_for_weak_endurance()
     weak_endurance = [{"area": "endurance", "label": "Endurance", "percentile": 20.0}]
     wb = openpyxl.load_workbook(io.BytesIO(build_seasonal_workbook(personal_grid(g, name="A", role="Batter", areas=weak_endurance))))
     squad = openpyxl.load_workbook(io.BytesIO(build_seasonal_workbook(g)))
-    assert wb.sheetnames == SHEETS and wb["Annual plan"]["A2"].value.startswith("ANNUAL PLAN FOR A (Batter)")
-    assert wb["Session plan"]["B7"].value == "Monday session plan - A"
+    assert wb.sheetnames[:5] == SHEETS and wb["Annual plan"]["A2"].value.startswith("ANNUAL PLAN FOR A (Batter)")
+    assert "SESSION PLANS - A -" in wb["Session plan"]["A1"].value and "TOPIC" in [c.value for c in wb["Jan W2 2027"]["A"]]  # the player's own
     own = [c.value for c in wb["Load distribution"][15][1:] if isinstance(c.value, int)]
     base = [c.value for c in squad["Load distribution"][15][1:] if isinstance(c.value, int)]
     assert own and [a - b for a, b in zip(own, base)] == [1] * len(base)                                 # +1 rep of 120 m
@@ -74,18 +74,23 @@ def test_all_players_in_one_excel(client, world):
     r = client.get(f"/squads/{world['squad_a']}/seasons/{sid}/player-plans.xlsx", headers=H(world, "coach_a"))
     assert r.status_code == 200 and "Seasonal-plans-all-players" in r.headers["content-disposition"]
     wb = openpyxl.load_workbook(io.BytesIO(r.content))
-    players = wb.sheetnames[:-3]
-    assert wb.sheetnames[-3:] == SHEETS[1:] and len(players) >= 2 and len(set(wb.sheetnames)) == len(wb.sheetnames)
+    cut = wb.sheetnames.index("Component distribution")
+    pairs = wb.sheetnames[:cut]
+    assert wb.sheetnames[cut:cut + 3] == SHEETS[2:] and len(pairs) >= 4 and len(set(wb.sheetnames)) == len(wb.sheetnames)
+    players, loads = pairs[0::2], pairs[1::2]                                                         # each player: plan, then own load
     titles = [wb[n]["A2"].value for n in players]
     assert all(t.startswith("ANNUAL PLAN FOR ") for t in titles) and len(set(titles)) == len(titles)   # one sheet per player
-    assert wb["Load distribution"]["B10"].value == f"='{players[0]}'!B10"
+    assert wb[players[0]]["B9"].hyperlink is not None                                               # each plan's weeks open their sessions
+    for p, ld in zip(players, loads):
+        assert " Load " in f" {ld} " and wb[ld]["B10"].value == f"='{p}'!B10"                        # linked to that player's plan
+        assert wb[ld]["A25"].value.endswith("other qualities (per week)")
 
 
 def test_one_player_plan_and_access(client, world):
     sid = make_season(client, world)
     url = f"/squads/{world['squad_a']}/seasons/{sid}/player-plans/{world['ann']}.xlsx"
     r = client.get(url, headers=H(world, "coach_a"))
-    assert r.status_code == 200 and openpyxl.load_workbook(io.BytesIO(r.content)).sheetnames == SHEETS
+    assert r.status_code == 200 and openpyxl.load_workbook(io.BytesIO(r.content)).sheetnames[:5] == SHEETS
     assert client.get(url).status_code == 401
     assert client.get(url, headers=H(world, "coach_b")).status_code in (403, 404)
     other = f"/squads/{world['squad_a']}/seasons/{sid}/player-plans/{world['cara']}.xlsx"
@@ -97,7 +102,7 @@ def test_tournament_gets_the_same_four_sheets(client, world):
     for path in ("seasonal-workbook.xlsx", "player-plans.xlsx"):
         r = client.get(f"/squads/{world['squad_a']}/seasons/{sid}/{path}", headers=H(world, "admin"))
         names = openpyxl.load_workbook(io.BytesIO(r.content)).sheetnames
-        assert r.status_code == 200 and names[-3:] == SHEETS[1:], path
+        assert r.status_code == 200 and "Session plan" in names and "Charts" in names and any("Load" in n for n in names), path
 
 
 def test_tournament_rows_are_filled_and_personal():

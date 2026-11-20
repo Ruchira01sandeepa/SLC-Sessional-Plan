@@ -60,7 +60,11 @@ def _finals(s: TestSession) -> dict:
 def _cohort_entries(db: Session, squad_id: int, season_id: int, window: str) -> tuple[list[dict], dict[int, TestSession]]:
     sessions = list(db.scalars(select(TestSession).join(Player, Player.id == TestSession.player_id).where(
         Player.squad_id == squad_id, Player.is_active, TestSession.season_id == season_id, TestSession.window == FitnessPhase(window))))
-    return [{"player_id": s.player_id, "level": s.level, "finals": _finals(s)} for s in sessions], {s.player_id: s for s in sessions}
+    age_group = db.scalar(select(Squad.age_group).where(Squad.id == squad_id))
+    gender = dict(db.execute(select(Player.id, Player.gender).where(Player.squad_id == squad_id)).all())
+    return [{"player_id": s.player_id, "level": s.level, "finals": _finals(s), "age_group": age_group,
+             "gender": gender[s.player_id].value if gender.get(s.player_id) is not None else None}
+            for s in sessions], {s.player_id: s for s in sessions}
 
 
 def _workload(db: Session, player: Player) -> tuple[dict, dict]:
@@ -112,17 +116,42 @@ def _session_out(s: TestSession) -> dict:
             "test_version": s.test_version, "surface": s.surface, "timing_method": s.timing_method, "notes": s.notes, "results": res}
 
 
-def _summary(player: Player, window: str, sess: TestSession | None, cat: dict | None) -> dict:
+def _test_goal(a: dict, t: dict, cohort: dict | None, window: str, age_group: str | None, gender: str) -> dict | None:
+    """The result this player should aim for at the next test window (player_profile.physical_goal: about 15 rank points
+    higher in the group, at least the age group's expected value, never more than 8% in one window)."""
+    i = WINDOWS.index(window)
+    nxt = WINDOW_LABEL[WINDOWS[i + 1]] if i + 1 < len(WINDOWS) else "next season's baseline"
+    # an unranked area (group too small) still gets a goal, from the age reference
+    g = physical_goal({**a, "percentile": a.get("percentile") or 0}, t["key"], (cohort or {}).get(t["key"]), nxt, age_group, gender)
+    if not g:
+        return None
+    pct = t.get("percentile")
+    age = t.get("age") or {}
+    keep = (pct is not None and pct >= 75) or age.get("band") == "strong"
+    kind = "keep" if keep else "focus" if pct is not None and pct < 50 else "improve"
+    why = {"keep": "Already strong: keep it, a small step on is enough.",
+           "focus": "Focus test: below the middle of the group. The goal moves it towards the middle in one window.",
+           "improve": "Middle of the group: a steady step towards the top quarter."}[kind]
+    if age.get("expected") is not None:
+        why += f" Expected for {age['age_group']}: {age['expected']} {g['unit']}."
+    return {"target": g["target"], "display": g["target_display"], "unit": g["unit"], "by": nxt, "kind": kind, "why": why,
+            "change": g["target_display"] != g["current_display"]}
+
+
+def _summary(player: Player, window: str, sess: TestSession | None, cat: dict | None, cohort: dict | None = None) -> dict:
     by_key = {r.test_key: r for r in sess.results} if sess else {}
+    ag = player.squad.age_group if player.squad else None
     areas = []
     for a in (cat["areas"] if cat else []):
         tests = []
         for t in a["tests"]:
             r = by_key.get(t["key"])
             bt = BY_KEY[t["key"]]
-            tests.append({**t, "trials_display": [(_trial_shown(bt, v) if v is not None else None) for v in
-                                                  ((r.trial_1, r.trial_2, r.trial_3) if r else (None,) * TRIALS)],
-                          "age": age_band(t["key"], t.get("value"), player.squad.age_group if player.squad else None, player.gender.value)})
+            row = {**t, "trials_display": [(_trial_shown(bt, v) if v is not None else None) for v in
+                                           ((r.trial_1, r.trial_2, r.trial_3) if r else (None,) * TRIALS)],
+                   "age": age_band(t["key"], t.get("value"), ag, player.gender.value)}
+            row["goal"] = _test_goal(a, row, cohort, window, ag, player.gender.value)
+            tests.append(row)
         areas.append({**a, "tests": tests})
     return {"player_id": player.id, "player": player.full_name, "role": player.role.value, "window": window, "window_label": WINDOW_LABEL[window],
             "level": sess.level if sess else None, "level_label": LEVEL_LABEL[sess.level] if sess else "Not tested",
@@ -130,7 +159,7 @@ def _summary(player: Player, window: str, sess: TestSession | None, cat: dict | 
             "note": cat["note"] if cat else "No test results for this window.", "areas": areas,
             "areas_counted": cat["areas_counted"] if cat else 0, "areas_total": cat["areas_total"] if cat else 0,
             "cohort_size": cat["cohort_size"] if cat else 0,
-            "focus_areas": cat["focus_areas"] if cat else [],
+            "focus_areas": cat["focus_areas"] if cat else [], "benchmark": cat.get("benchmark") if cat else None,
             "height_cm": sess.height_cm if sess else None, "weight_kg": sess.weight_kg if sess else None}
 
 
@@ -232,6 +261,8 @@ def squad_categories(squad_id: int, season_id: int, window: str, db: Session = D
                      "level_label": LEVEL_LABEL[sess.level] if sess else None, "band": cat["band"] if cat else None,
                      "band_label": cat["band_label"] if cat else None, "overall": cat["overall"] if cat else None,
                      "focus_areas": [f["label"] for f in cat["focus_areas"]] if cat else [], "note": cat["note"] if cat else None,
+                     "benchmark": ({k: cat["benchmark"][k] for k in ("total", "max", "percent", "band", "band_label")}
+                                   if cat and cat.get("benchmark") else None),
                      "readiness": cz.readiness(evals[p.id][1].get("alerts_worst"), p.availability.value)})
     return {"window": window, "window_label": WINDOW_LABEL[window], "min_cohort": cz.MIN_COHORT, "band_names": list(cz.BAND_NAMES), "players": rows}
 
@@ -247,8 +278,15 @@ def player_testing(player_id: int, season_id: int | None = None, window: str | N
     sessions.sort(key=lambda s: order[s.window.value])
     entries, by_player = _cohort_entries(db, p.squad_id, season.id, window)
     cat = cz.categorise(entries).get(p.id)
+    mine = next((e for e in entries if e["player_id"] == p.id), None)
+    cohort: dict[str, list[float]] = {}
+    for e in entries:
+        if mine and e["level"] == mine["level"]:
+            for k, v in e["finals"].items():
+                if v is not None:
+                    cohort.setdefault(k, []).append(v)
     return {"season": {"id": season.id, "name": season.name}, "window": window, "sessions": [_session_out(s) for s in sessions],
-            "category": _summary(p, window, by_player.get(p.id), cat), "readiness": _readiness(db, p),
+            "category": _summary(p, window, by_player.get(p.id), cat, cohort), "readiness": _readiness(db, p),
             "band_names": list(cz.BAND_NAMES), "min_cohort": cz.MIN_COHORT}
 
 

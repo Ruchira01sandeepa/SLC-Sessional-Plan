@@ -278,7 +278,7 @@ def day_sessions(g: dict, roles: list[str], bowling: set[str] | None = None) -> 
 
 
 # ───────────── the supplied workbook's own layout: four sheets, week by week ─────────────
-SHEETS = ["Annual plan", "Load distribution", "Component distribution", "Session plan"]
+SHEETS = ["Annual plan", "Load distribution", "Component distribution", "Session plan", "Charts"]   # then one sheet per week
 
 
 def drawn(g: dict) -> dict:
@@ -289,10 +289,11 @@ def drawn(g: dict) -> dict:
 def write_interval_load_sheet(ws, g: dict, annual: str = "Annual plan") -> None:
     """The supplied "load distribution" sheet: the Annual plan's header block (its % row by formula), 100 m at a % of maximal
     speed, interval runs of 120 / 150 / 300 m written as distance*reps, and Total meter worked out by formula."""
+    from .annual_grid import TRANS
     from .load_distribution import INTERVAL_RUNS, build_interval_loads
-    extra = (g.get("player") or {}).get("extra_endurance_reps", 0)
-    g = drawn(g)
-    ld = build_interval_loads(g, extra)
+    player = g.get("player")
+    g = {**drawn(g), "player": player}
+    ld = build_interval_loads(g)
     n = g["weeks"]
     linked = annual if ws.parent and annual in ws.parent.sheetnames else None
     write_header(ws, g, "Session(Percentage)", pct_from=linked)
@@ -306,14 +307,36 @@ def write_interval_load_sheet(ws, g: dict, annual: str = "Annual plan") -> None:
         c = w + 2
         if ld["speed_100m"][w]:
             _txt(ws, 12, c, ld["speed_100m"][w], align=CENTER, fmt="0%")
+        if ld["speed_endurance_reps"][w]:
+            m = ld["speed_endurance_m"][w]
+            _txt(ws, 13, c, ld["speed_endurance_reps"][w], align=CENTER, fmt=f'"{m}m*"0')
+        elif g["kinds"][w] == TRANS:
+            _txt(ws, 13, c, "games", align=CENTER)                   # transition: speed games, no set
         for m in INTERVAL_RUNS:
             if ld["runs"][m][w]:
                 _txt(ws, row_of[m], c, ld["runs"][m][w], align=CENTER, fmt=f'"{m}m*"0')   # a number, shown as 120m*8
+            elif ld["tournament_weeks"][w]:
+                _txt(ws, row_of[m], c, "match", align=CENTER)          # tournament: the matches are the conditioning
         if ld["total"][w]:
             col = L(c)
-            cell = _txt(ws, 22, c, "=" + "+".join(f"N({col}{row_of[m]})*{m}" for m in INTERVAL_RUNS), align=CENTER, fmt='0"m"')
+            parts = [f"N({col}{row_of[m]})*{m}" for m in INTERVAL_RUNS]
+            if ld["speed_endurance_reps"][w]:
+                parts.append(f"N({col}13)*{ld['speed_endurance_m'][w]}")
+            cell = _txt(ws, 22, c, "=" + "+".join(parts), align=CENTER, fmt='0"m"')
             cell.data_type = "f"
     _box(ws, 4, 23, 1, n + 1)
+    # the player's other qualities per week, in the weeks the Annual plan marks them (weak areas carry the development extra)
+    who = f"{player['name']}'s" if player else "Squad"
+    _txt(ws, 25, 1, f"{who} other qualities (per week)", bold=True)
+    for i, f in enumerate(ld["focus"]):
+        r = 26 + i
+        _txt(ws, r, 1, f["label"] + (" - FOCUS" if f["weak"] else ""), bold=f["weak"])
+        for w, v in enumerate(f["values"]):
+            if v:
+                _txt(ws, r, w + 2, v, align=CENTER)
+            elif ld["tournament_weeks"][w] or g["kinds"][w] == TRANS:   # no jumps in a tournament week or in transition, on purpose
+                _txt(ws, r, w + 2, "match" if ld["tournament_weeks"][w] else "rest", align=CENTER)
+    _box(ws, 25, 26 + len(ld["focus"]) - 1, 1, n + 1)
     ws.freeze_panes = "B1"
     if ws.parent is not None:
         ws.parent.calculation.fullCalcOnLoad = True
@@ -361,16 +384,284 @@ def write_classic_session_sheet(ws, g: dict) -> None:
     write_session_sheet(ws, ses)
 
 
+# ───────────── week-by-week session plans: a week list with links, one sheet per week (Mon-Fri), the supplied layout ─────────────
+SESSION_SHEETS = ["Session plan", "Charts"]
+EQUIP = {"trainer_1": "SKIPPING, BOX, STOP WATCH, WHISTLE, MINI CONES, BARBELL, SQUAT RACK, LEG PRESS, DUMBBELLS, MATS, BALLS",
+         "trainer_2": "SKIPPING, STOP WATCH, WHISTLE, MINI CONES, BENCH, BARBELL, CABLE MACHINE, DUMBBELLS, MEDICINE BALLS, AGILITY LADDER, BALLS, STUMPS",
+         "school": "SKIPPING, MATS, BANDS, SCHOOL NETS, BALLS", "match": "MATCH KIT, WATER, FIRST AID", "recovery": "MATS, BANDS, POOL IF AVAILABLE",
+         "prematch": "CONES, BALLS, STUMPS", "trainer": "BALLS, MATS", "holiday": "-"}
+PART_OF = {"INITIAL PART": "initial", "MAIN PART": "main", "FINAL PART": "final"}
+
+
+def _roles_of(g: dict, roles: list[str] | None) -> list[str]:
+    from .session_plans import ROLE_LABEL
+    if g.get("player"):
+        key = {v: k for k, v in ROLE_LABEL.items()}.get(g["player"]["role"], "batter")
+        return [key]
+    return roles or ["fast_bowler", "spin_bowler", "batter"]
+
+
+def week_sheet_name(monday, used: set[str]) -> str:
+    """'Jan W2 2027' - the week of 11-15 January 2027 (the week belongs to the month of its Monday)."""
+    base = f"{monday:%b} W{(monday.day - 1) // 7 + 1} {monday:%Y}"
+    out, i = base, 2
+    while out in used:
+        out, i = f"{base} {i}", i + 1
+    used.add(out)
+    return out
+
+
+def _duration(minutes: int) -> str:
+    if not minutes:
+        return "-"
+    h, m = divmod(minutes, 60)
+    return " ".join(x for x in (f"{h}h" if h else "", f"{m}min" if m else "") if x)
+
+
+def _link(cell, sheet: str) -> None:
+    """A link to another sheet of this workbook (opens it on click)."""
+    from openpyxl.worksheet.hyperlink import Hyperlink
+    cell.hyperlink = Hyperlink(ref=cell.coordinate, location=f"'{sheet}'!A1", display=str(cell.value or sheet))
+    cell.font = Font(color="0563C1", underline="single", bold=cell.font.bold if cell.font else False)
+
+
+def _day_session(g: dict, d: dict) -> dict:
+    """A day of weekly_sessions.build_weeks as the supplied session sheet: title, the 8 header lines, parts with timed headings."""
+    from .annual_grid import PERIOD_OF, PHASE_LABEL as GPL
+    s0 = g["week_starts"][0]
+    w = (d["date"] - s0).days // 7
+    k = g["kinds"][w]
+    macro = next((num for a, b, num in g["macros"] if a <= w <= b), "-")
+    month = MONTH_NAMES[d["date"].month - 1]
+    micro_type = ("Competition" if k == "competition" else "Transition" if k == "transition"
+                  else "Recovery (lighter week)" if (g.get("recovery_weeks") or [False] * g["weeks"])[w] else "Loading")
+    who = g["player"]["name"] if g.get("player") else "Squad"
+    topic = d["header"][0].split(" · ")[0] if d["header"] else d["title"]
+    eq = EQUIP.get(f"{d['kind']}_{d['date'].weekday()}", EQUIP.get(d["kind"], "-"))
+    header = [("TOPIC", f"{d['day']} session plan - {who}: {topic}"), ("PERIOD", PERIOD_OF[k]), ("STAGE", GPL[k]),
+              ("MESO", f"Block {macro} ({month})"), ("MICRO", f"Micro {w + 1} - {micro_type}"), ("EQUIPMENTS", eq),
+              ("DURATION", "Match day" if d["kind"] == "match" else _duration(d.get("minutes") or 0)),
+              ("TRAINING UNIT", "No practice" if d["kind"] == "holiday" else
+               (d.get("unit") + f" · week load {int(round(g['percentage'][w] * 100))}%") if d.get("unit")
+               else f"{int(round(g['percentage'][w] * 100))}% of the maximum planned load")]
+    parts: list[dict] = []
+    plain = {"initial": "WARM UP", "main": "MAIN", "final": "WARM DOWN"}
+    for x in d["rows"]:
+        key = PART_OF.get(x["part"], "main")
+        if x.get("head"):                                        # a timed block: 'WARM-UP' with '15 MIN' in the TIME column
+            parts.append({"key": key, "name": x["desc"], "time": x["time"], "items": []})
+            continue
+        if not parts or parts[-1]["key"] != key:
+            parts.append({"key": key, "name": plain[key] if x["part"] in PART_OF else x["part"], "time": "", "items": []})
+        parts[-1]["items"].append({"desc": x["desc"], "time": x["time"], "rep": x["rep"], "set": x["set"], "org": x["org"], "rest": x["rest"]})
+    return {"title": d["title"].upper(), "header": header, "parts": parts}
+
+
+MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+
+
+def write_session_block(ws, s: dict, r0: int, focus: list[str] | None = None) -> int:
+    """One session in the supplied sheet's layout, starting at row r0 (title r0-r0+1, header from r0+3, table after). Returns the
+    next free row. focus: player focus lines (all-players workbook)."""
+    wrap = Alignment(wrap_text=True, vertical="top")
+    ws.merge_cells(start_row=r0, start_column=1, end_row=r0 + 1, end_column=7)
+    _txt(ws, r0, 1, s["title"], align=CENTER, bold=True)
+    r = r0 + 3
+    for label, value in s["header"]:
+        _txt(ws, r, 1, label, fill=BLUE, white=True, bold=True, align=Alignment(vertical="top"))
+        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=7)
+        _txt(ws, r, 2, value, fill=BLUE, white=True, align=wrap)
+        r += 1
+    h1, h2 = r, r + 1
+    for rng in (f"A{h1}:A{h2}", f"B{h1}:B{h2}", f"C{h1}:E{h1}", f"F{h1}:F{h2}", f"G{h1}:G{h2}"):
+        ws.merge_cells(rng)
+    for cell, text in ((f"A{h1}", "PART"), (f"B{h1}", "DESCRIPTION"), (f"C{h1}", "DOSIFICATION"), (f"F{h1}", "ORGANIZATION"), (f"G{h1}", "REST"),
+                       (f"C{h2}", "TIME"), (f"D{h2}", "REP"), (f"E{h2}", "SET")):
+        c = ws[cell]
+        _txt(ws, c.row, c.column, text, fill=LIGHT, bold=True, align=CENTER)
+    for rr in (h1, h2):
+        for c in range(1, 8):
+            ws.cell(row=rr, column=c).fill = PatternFill("solid", fgColor=LIGHT)
+    r = h2 + 1
+    part_label = {"initial": "INITIAL PART", "main": "MAIN PART", "final": "FINAL PART"}
+    spans: list[tuple[str, int, int]] = []
+    for p in s["parts"]:
+        start = r
+        _txt(ws, r, 2, p["name"], bold=True, fill=LIGHT)
+        _txt(ws, r, 3, p.get("time") or None, bold=True, fill=LIGHT, align=CENTER)
+        for c in (4, 5, 6, 7):
+            _txt(ws, r, c, None, fill=LIGHT)
+        r += 1
+        for it in p["items"]:
+            _txt(ws, r, 2, it["desc"], fill=LIGHT, align=wrap)
+            _txt(ws, r, 3, it["time"] or None, fill=LIGHT, align=Alignment(horizontal="center", vertical="top", wrap_text=True))
+            _txt(ws, r, 4, it["rep"] or None, fill=LIGHT, align=Alignment(horizontal="center", vertical="top"))
+            _txt(ws, r, 5, it["set"] or None, fill=LIGHT, align=Alignment(horizontal="center", vertical="top"))
+            _txt(ws, r, 6, it["org"] or None, fill=LIGHT, align=wrap)
+            _txt(ws, r, 7, it["rest"] or None, fill=LIGHT, align=wrap)
+            r += 1
+        if spans and spans[-1][0] == p["key"]:
+            spans[-1] = (p["key"], spans[-1][1], r - 1)
+        else:
+            spans.append((p["key"], start, r - 1))
+    for key, a_, b_ in spans:                                    # PART column: one merged cell per stage, as on the supplied sheet
+        _txt(ws, a_, 1, part_label[key], fill=LIGHT, bold=True, align=Alignment(horizontal="center", vertical="center"))
+        if b_ > a_:
+            ws.merge_cells(start_row=a_, start_column=1, end_row=b_, end_column=1)
+    _box(ws, h1, r - 1, 1, 7)
+    if focus:
+        _txt(ws, r, 1, "PLAYER FOCUS", bold=True)
+        for line in focus:
+            ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=7)
+            _txt(ws, r, 2, line, align=wrap)
+            r += 1
+    return r + 2
+
+
+def write_week_sessions(wb, g: dict, weeks: dict, *, focus: dict | None = None) -> dict:
+    """Session plan = the list of weeks (click a week to open it); one sheet per week with its Monday-Friday sessions in the
+    supplied layout. focus: {(week label, day 1-5): ["Player: line", ...]} (all-players workbook). Returns {plan week: sheet}."""
+    from datetime import timedelta
+    idx = wb.create_sheet("Session plan")
+    for col, w in zip("ABCDEFG", (34, 14, 26, 12, 12, 14, 40)):
+        idx.column_dimensions[col].width = w
+    idx.merge_cells("A1:G1")
+    who = g["player"]["name"] if g.get("player") else g.get("squad", "Squad")
+    _txt(idx, 1, 1, f"SESSION PLANS - {who.upper()} - CLICK A WEEK TO OPEN ITS MONDAY TO FRIDAY SESSIONS", bold=True, fill=BLUE, white=True, align=CENTER)
+    idx.merge_cells("A2:G2")
+    _txt(idx, 2, 1, "Tuesday and Wednesday: practice with the trainer. Monday, Thursday and Friday: practice at school. Sri Lankan public holidays "
+                    "(and rest days in the Calendar): no practice. On each week's sheet, 'Back to the week list' returns here.",
+         align=Alignment(wrap_text=True, vertical="top"))
+    idx.row_dimensions[2].height = 30
+    for c, h in enumerate(["Week (click to open)", "Sheet", "Phase", "Trainer days", "School days", "No practice", "Public holidays / rest days"], 1):
+        _txt(idx, 4, c, h, bold=True, fill=LIGHT, align=CENTER)
+    used = set(wb.sheetnames)
+    s0 = g["week_starts"][0]
+    link_of_week: dict[int, str] = {}
+    r = 5
+    for wk in weeks["weeks"]:
+        days = [d for d in wk["days"] if d["kind"] != "outside"]
+        if not days:
+            continue
+        name = week_sheet_name(wk["monday"], used)
+        ws = wb.create_sheet(name)
+        for col, w in zip("ABCDEFG", (20, 52, 24, 14, 10, 24, 26)):
+            ws.column_dimensions[col].width = w
+        _link(ws.cell(row=1, column=1, value="Back to the week list"), "Session plan")
+        ws.merge_cells("B1:G1")
+        _txt(ws, 1, 2, f"{wk['label'].upper()} - {who}", bold=True, align=CENTER)
+        row = 3
+        for i, d in enumerate(wk["days"], 1):
+            if d["kind"] == "outside":
+                continue
+            row = write_session_block(ws, _day_session(g, d), row, (focus or {}).get((wk["label"], i)))
+        ws.page_setup.orientation = "portrait"
+        ws.page_setup.fitToWidth, ws.page_setup.fitToHeight = 1, 0
+        ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
+        # the list
+        _link(idx.cell(row=r, column=1, value=wk["label"]), name)
+        _txt(idx, r, 2, name)
+        w0 = max(0, (days[0]["date"] - s0).days // 7)
+        _txt(idx, r, 3, GRID_PHASE_LABEL[g["kinds"][min(w0, g["weeks"] - 1)]])
+        idx.cell(row=r, column=4, value=sum(1 for d in days if d["kind"] == "trainer"))
+        idx.cell(row=r, column=5, value=sum(1 for d in days if d["kind"] == "school"))
+        idx.cell(row=r, column=6, value=sum(1 for d in days if d["kind"] == "holiday"))
+        _txt(idx, r, 7, "; ".join(f"{d['date']:%a %d %b}: {d['title'].split(': ', 1)[-1]}" for d in days if d["kind"] == "holiday") or None,
+             align=Alignment(wrap_text=True))
+        for wd in range(g["weeks"]):                             # Annual plan week -> the calendar week holding its first weekday
+            ws_ = g["week_starts"][wd]
+            first_weekday = ws_ + timedelta(days=(7 - ws_.weekday()) % 7) if ws_.weekday() >= 5 else ws_
+            if wk["monday"] <= first_weekday <= wk["monday"] + timedelta(days=4):
+                link_of_week.setdefault(wd, name)
+        r += 1
+    _box(idx, 4, r - 1, 1, 7)
+    idx.freeze_panes = "A5"
+    return link_of_week
+
+
+def link_annual_weeks(ws, g: dict, link_of_week: dict) -> None:
+    """Annual plan: each week's date (Dates row) opens that week's session sheet."""
+    from .annual_grid_excel import R_DATE
+    if g.get("daily", {}).get("short"):
+        return
+    for w, name in link_of_week.items():
+        _link(ws.cell(row=R_DATE, column=w + 2), name)
+
+
+def write_charts_sheet(ws, g: dict, weeks: dict) -> None:
+    """Charts of the seasonal plan, drawn from NUMBERS written on this sheet (never formulas, so the charts show in any viewer):
+    planned load, running metres, practice days (trainer / school / no practice) and the weekly doses of the other qualities."""
+    from openpyxl.chart import BarChart, LineChart, Reference
+    from .load_distribution import build_interval_loads
+    from .weekly_sessions import practice_counts
+    ld = build_interval_loads(g)
+    counts = practice_counts(g, weeks)
+    focus = ld["focus"]
+    heads = ["Week", "Planned load %", "Running metres", "Trainer days", "School days", "No practice (holiday)"] + [f["label"] for f in focus]
+    for c, h in enumerate(heads, 1):
+        _txt(ws, 1, c, h, bold=True, fill=LIGHT, align=CENTER)
+        ws.column_dimensions[L(c)].width = 14
+    n = g["weeks"]
+    for w in range(n):
+        r = w + 2
+        _txt(ws, r, 1, f"W{w + 1} {g['week_starts'][w]:%d %b}")
+        ws.cell(row=r, column=2, value=g["percentage"][w]).number_format = "0%"
+        ws.cell(row=r, column=3, value=ld["total"][w] or 0)
+        for c, v in enumerate(counts[w], 4):
+            ws.cell(row=r, column=c, value=v)
+        for c, f in enumerate(focus, 7):
+            ws.cell(row=r, column=c, value=f["values"][w] or 0)
+    last = n + 1
+    cats = Reference(ws, min_col=1, min_row=2, max_row=last)
+
+    def place(chart, anchor):
+        chart.height, chart.width = 8, 26
+        chart.set_categories(cats)
+        chart.x_axis.delete = chart.y_axis.delete = False
+        ws.add_chart(chart, anchor)
+
+    who = g["player"]["name"] if g.get("player") else g.get("squad", "Squad")
+    a = LineChart()
+    a.title, a.y_axis.title = f"Planned load % by week - {who}", "Load %"
+    a.add_data(Reference(ws, min_col=2, min_row=1, max_row=last), titles_from_data=True)
+    a.y_axis.number_format, a.y_axis.scaling.min, a.y_axis.scaling.max = "0%", 0, 1
+    place(a, "L2")
+    b = BarChart()
+    b.title, b.y_axis.title = "Running metres by week (Load distribution)", "metres"
+    b.add_data(Reference(ws, min_col=3, min_row=1, max_row=last), titles_from_data=True)
+    place(b, "L19")
+    c = BarChart()
+    c.type, c.grouping, c.overlap = "col", "stacked", 100
+    c.title, c.y_axis.title = "Practice days by week: trainer (Tue, Wed), school (Mon, Thu, Fri), no practice (public holidays)", "days"
+    c.add_data(Reference(ws, min_col=4, max_col=6, min_row=1, max_row=last), titles_from_data=True)
+    place(c, "L36")
+    d = LineChart()
+    d.title, d.y_axis.title = f"Other qualities per week - {who}", "contacts / sets / minutes / reps"
+    d.add_data(Reference(ws, min_col=7, max_col=6 + len(focus), min_row=1, max_row=last), titles_from_data=True)
+    place(d, "L53")
+    ws.freeze_panes = "B2"
+
+
+def _week_parts(wb, g: dict, roles, *, focus=None, annual_sheets=("Annual plan",)) -> None:
+    from .weekly_sessions import build_weeks
+    weeks = build_weeks(g, roles=_roles_of(g, roles), extra_off=g.get("rest_days"))
+    write_charts_sheet(wb.create_sheet("Charts"), g, weeks)
+    links = write_week_sessions(wb, g, weeks, focus=focus)
+    wb.move_sheet("Session plan", offset=wb.sheetnames.index("Charts") - wb.sheetnames.index("Session plan"))
+    for name in annual_sheets:
+        link_annual_weeks(wb[name], g, links)
+
+
 def build_seasonal_workbook(g: dict, roles: list[str] | None = None, bowling: set[str] | None = None) -> bytes:
-    """The seasonal plan exactly as the supplied workbook: Annual plan | Load distribution | Component distribution | Session plan.
-    One column per week (per day for a tournament). g may be the squad grid or a player's (player_season_plan.personal_grid)."""
+    """The seasonal plan as the supplied workbook: Annual plan | Load distribution | Component distribution | Session plan (choose a
+    week: its Monday-Friday sessions) | Charts | Session data. g may be the squad grid or a player's (player_season_plan.personal_grid)."""
     wb = Workbook()
     ws = wb.active
     ws.title = "Annual plan"
     write_annual_sheet(ws, g, notes=False)
     write_interval_load_sheet(wb.create_sheet("Load distribution"), g)
     write_classic_component_sheet(wb.create_sheet("Component distribution"))
-    write_classic_session_sheet(wb.create_sheet("Session plan"), g)
+    _week_parts(wb, g, roles)
     buf = BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -387,19 +678,41 @@ def player_sheet_name(name: str, squad_no: int | None, used: set[str]) -> str:
     return out
 
 
+def load_sheet_name(annual_name: str, used: set[str]) -> str:
+    """'7 Sasindu Losith' -> '7 Load Sasindu Losith' (at most 31 characters, unique)."""
+    no, _, rest = annual_name.partition(" ")
+    base = (f"{no} Load {rest}" if no.isdigit() and rest else f"Load {annual_name}")[:31]
+    out, i = base, 2
+    while out in used:
+        out, i = f"{base[:28]} {i}", i + 1
+    used.add(out)
+    return out
+
+
 def build_players_workbook(squad_grid: dict, players: list[tuple[str, dict]]) -> bytes:
-    """Every player's plan in ONE Excel: one Annual-plan sheet per player (named after the player), then the squad's Load
-    distribution, Component distribution and Session plan. players: [(sheet name, personal grid)]."""
+    """Every player's plan in ONE Excel: for each player their own Annual plan and their own Load distribution (built from their
+    test ranks), then the shared Component distribution and Session plan. players: [(sheet name, personal grid)]."""
     wb = Workbook()
     wb.remove(wb.active)
+    used = set(n for n, _ in players) | {"Component distribution", "Session plan"}
     for name, pg in players:
         write_annual_sheet(wb.create_sheet(name), pg, notes=False)
+        write_interval_load_sheet(wb.create_sheet(load_sheet_name(name, used)), pg, annual=name)
     if not players:
         write_annual_sheet(wb.create_sheet("Annual plan"), squad_grid, notes=False)
-    first = wb.sheetnames[0]
-    write_interval_load_sheet(wb.create_sheet("Load distribution"), squad_grid, annual=first)
+        write_interval_load_sheet(wb.create_sheet("Load distribution"), squad_grid)
     write_classic_component_sheet(wb.create_sheet("Component distribution"))
-    write_classic_session_sheet(wb.create_sheet("Session plan"), squad_grid)
+    from .weekly_sessions import build_weeks
+    focus: dict = {}
+    for name, pg in players:                                     # each player's FOCUS work, listed under each day of the squad sessions
+        pw = build_weeks(pg, roles=_roles_of(pg, None), extra_off=pg.get("rest_days"))
+        for wk in pw["weeks"]:
+            for i, d in enumerate(wk["days"], 1):
+                for x in d["rows"]:
+                    if "FOCUS" in x["desc"]:
+                        dose = " ".join(v for v in (x["time"], f"{x['rep']} reps" if x["rep"] else "", f"x {x['set']} sets" if x["set"] else "") if v)
+                        focus.setdefault((wk["label"], i), []).append(f"{pg['player']['name']}: {x['desc'].replace(' - FOCUS', '')}" + (f" ({dose})" if dose else ""))
+    _week_parts(wb, squad_grid, None, focus=focus, annual_sheets=tuple(n for n, _ in players) or ("Annual plan",))
     buf = BytesIO()
     wb.save(buf)
     return buf.getvalue()

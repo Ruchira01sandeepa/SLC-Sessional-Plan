@@ -137,40 +137,130 @@ def build_daily_loads(g: dict) -> dict:
                         "'Overs this week' is shown on the last day of each week."]}
 
 
-# ───────────── the supplied sheet's running block (100 m speed + 120 / 150 / 300 m interval runs, week by week) ─────────────
+# ───────────── the supplied sheet's running block (100 m speed + speed endurance + 120 / 150 / 300 m interval runs) ─────────────
+# Every phase is filled. What is used where follows the supplied "Example component distribution" table and the youth guidelines
+# (Zatsiorsky ch. 5 and 10; NSCA youth position statement):
+#   * 100 m at a % of maximal speed: technique strides in general preparation and transition (70-80%), building through special
+#     preparation (85-90%) to fast running in pre-competition (95%) and competition (100%). A tournament week: strides at 70%.
+#   * Anaerobic endurance (speed): the speed-endurance set of the phase - 60 m runs in general preparation (alactic, technique),
+#     100 m intervals in special preparation (table: 100 m interval = S, C), 50 m intervals in pre-competition and competition
+#     (table: 50 m interval = P, C). Short, with full recovery: U15 players have a limited glycolytic capacity, so long lactic
+#     runs are not used. Transition: speed games (no set).
+#   * Interval runs 120 / 150 / 300 m: aerobic-anaerobic conditioning in every phase. Reps fall from preparation to competition
+#     (volume falls as intensity rises); transition keeps a light 120 m / 150 m set (active rest); a tournament week keeps 2 x 120 m.
+# Reps scale with the week's planned load so each phase's hardest week gets the full reps and lighter weeks fewer.
 INTERVAL_RUNS = (120, 150, 300)
-SPEED_100M = {SPECIAL: (0.85, 0.90), PRECOMP: (0.95, 0.95), COMP: (1.00, 1.00)}   # % of max speed; the block opens at 80%
-# reps at the season's highest load, per phase (120 m, 150 m, 300 m); 0 = not used in that phase
-INTERVAL_BASE = {GENERAL: (8, 6, 4), SPECIAL: (8, 8, 4), PRECOMP: (7, 4, 3), COMP: (4, 6, 0)}
-STRIDES = 0.70                                   # 100 m strides on tournament days before a match (activation, not conditioning)
-LEAD_IN_WEEKS = 2                                # the block starts in the last 2 weeks of general preparation, as on the sheet
+SPEED_100M = {GENERAL: (0.75, 0.80), SPECIAL: (0.85, 0.90), PRECOMP: (0.95, 0.95), COMP: (1.00, 1.00), TRANS: (0.70, 0.70)}
+STRIDES = 0.70                                   # 100 m strides: transition, and tournament days / weeks (activation, not conditioning)
+# reps at each phase's hardest week (120 m, 150 m, 300 m)
+INTERVAL_BASE = {GENERAL: (8, 6, 4), SPECIAL: (8, 8, 4), PRECOMP: (7, 4, 3), COMP: (4, 4, 2), TRANS: (4, 2, 2)}   # transition: easy pace
+TOURNAMENT_RUNS = (2, 0, 0)                      # a week of a tournament: the matches carry the load ("match" in the empty rows)
+TOURNAMENT_SE = (30, 3)                           # 30 m x 3 activation runs (alactic; table: 30 m = S, P, C)
+SPEED_ENDURANCE = {GENERAL: (60, 4), SPECIAL: (100, 4), PRECOMP: (50, 6), COMP: (50, 4)}   # (metres, reps at the hardest week)
+LEAD_IN_WEEKS = 2                                # kept for the notes: the supplied sheet opened its block 2 weeks before special prep
+
+# Each player's own running, from their test ranks (player_season_plan.classify): a WEAK area gets more, a STRONG area keeps the
+# squad's full work so it keeps improving. Never more than the extra below, so the plan stays safe for a 14-15-year-old.
+PLAYER_EXTRA = {
+    "endurance": "+1 rep of 120 m and 150 m every week they are run, +1 x 300 m in general and special preparation",
+    "speed": "+2 reps of the speed-endurance set (row 13) in special preparation, pre-competition and competition",
+}
+
+# The player's other qualities, per week (rows under the running block): what the Annual plan marks, as a weekly dose.
+# Squad dose at each phase's hardest week; a WEAK area adds the development extra. Youth guidelines: plyometric contacts low to
+# moderate (NSCA: about 50-100 a session for trained youth, 2 non-consecutive days), 1-3 sets per exercise 2-3 times a week.
+FOCUS_ROWS = [  # (area, row label, unit, grid row it follows, squad dose per phase, weak extra)
+    # leg power: landing and jump technique in preparation (Coordination), explosive power in pre-competition and competition
+    ("power", "Leg power (jump contacts)", "contacts", (("Physical", "Coordination"), ("Technical", "Explosive power")),
+     {GENERAL: 30, SPECIAL: 50, PRECOMP: 80, COMP: 40, TRANS: 0}, 20),
+    ("upper_strength", "Upper-body strength (push / pull sets)", "sets", (("Physical", "Strength"),),
+     {GENERAL: 8, SPECIAL: 10, PRECOMP: 8, COMP: 6, TRANS: 4}, 4),
+    ("core", "Core (minutes)", "min", (("Physical", "Strength"),),
+     {GENERAL: 30, SPECIAL: 30, PRECOMP: 25, COMP: 20, TRANS: 15}, 15),
+    ("agility", "Agility (change-of-direction reps)", "reps", (("Physical", "Coordination"),),
+     {GENERAL: 10, SPECIAL: 16, PRECOMP: 20, COMP: 12, TRANS: 6}, 8),   # transition: games
+]
+TOURNAMENT_FOCUS = {"power": 0, "upper_strength": 4, "core": 15, "agility": 6}
 
 
-def build_interval_loads(g: dict, extra_reps: int = 0) -> dict:
-    """Week-by-week running block laid out like the supplied "load distribution" sheet: 100 m at a % of maximal speed and interval
-    runs of 120, 150 and 300 m (reps per week). It runs from the end of general preparation to competition and scales with the week's
-    planned load, so each phase's hardest week gets the full reps and lighter weeks fewer. Total metres are worked out by the sheet (formula)."""
+def _player_areas(g: dict) -> tuple[set[str], set[str]]:
+    p = g.get("player") or {}
+    return {a["area"] for a in p.get("weak", [])}, {a["area"] for a in p.get("strong", [])}
+
+
+def build_interval_loads(g: dict, extra_reps: int | None = None) -> dict:
+    """Week-by-week running block laid out like the supplied "load distribution" sheet, filled in every phase, plus the player's
+    other qualities as weekly doses. g: a grid from annual_grid.build_grid, or a player's (player_season_plan.personal_grid), whose
+    weak / strong areas change the numbers. Total metres are worked out by the sheet (formula)."""
     n, kinds, pct = g["weeks"], g["kinds"], g["percentage"]
-    gen = [w for w in range(n) if kinds[w] == GENERAL]
-    block = set(gen[-LEAD_IN_WEEKS:]) | {w for w in range(n) if kinds[w] in (SPECIAL, PRECOMP, COMP)}
-    if g.get("day_kind_keys"):                                   # a tournament drawn day by day: runs only on real training days
-        block = {w for w in block if g["day_kind_keys"][w] in ("heavy", "medium", "free", "practice")}
-    top = {k: max((pct[w] for w in block if kinds[w] == k), default=1) or 1 for k in (GENERAL, SPECIAL, PRECOMP, COMP)}   # each phase's hardest week
+    weak, _strong = _player_areas(g)
+    if extra_reps is None:
+        extra_reps = 1 if "endurance" in weak else 0
+    dk = g.get("day_kind_keys")                                  # a tournament drawn day by day
+    tour_week = [False] * n
+    if not dk and (g.get("daily") or {}).get("tournament"):
+        d = g["daily"]
+        for i, w in enumerate(d["week_of_day"]):
+            if d["day_kind_keys"][i] == "match":
+                tour_week[w] = True                              # a week of the tournament (matches every second day)
+    train = [True] * n
+    if dk:
+        train = [dk[w] in ("heavy", "medium", "free", "practice") for w in range(n)]
+    top = {k: max((pct[w] for w in range(n) if kinds[w] == k and train[w] and not tour_week[w]), default=1) or 1 for k in INTERVAL_BASE}
+
+    def scale(base: int, w: int) -> int:
+        return max(1, int(base * pct[w] / top[kinds[w]] + 0.5)) if base else 0
+
     speed = [None] * n
-    for w in [w for w in gen[-LEAD_IN_WEEKS:] if w in block]:
-        speed[w] = 0.80
     for ph, (lo, hi) in SPEED_100M.items():
-        ws = [w for w in range(n) if kinds[w] == ph and w in block]
+        ws = [w for w in range(n) if kinds[w] == ph and train[w] and not tour_week[w]]
+        half = max(1, -(-len(ws) // 2))
         for i, w in enumerate(ws):
-            speed[w] = round(lo + (hi - lo) * (i // max(1, -(-len(ws) // 2))), 2) if len(ws) > 1 else lo
-    if g.get("day_kind_keys"):                                   # tournament days: 100 m strides at 70% to activate before a match
-        for w in range(n):
-            if kinds[w] == COMP and g["day_kind_keys"][w] in ("before", "between"):
-                speed[w] = STRIDES
+            speed[w] = round(lo + (hi - lo) * (i // half), 2) if len(ws) > 1 else lo
+    for w in range(n):
+        if tour_week[w] or (dk and kinds[w] == COMP and dk[w] in ("before", "between")):
+            speed[w] = STRIDES
+
     runs = {m: [None] * n for m in INTERVAL_RUNS}
-    for w in sorted(block):
-        for m, base in zip(INTERVAL_RUNS, INTERVAL_BASE[kinds[w]]):
-            if base:
-                runs[m][w] = max(1, int(base * pct[w] / top[kinds[w]] + 0.5)) + (extra_reps if m in (120, 150) else 0)
-    total = [sum(m * (runs[m][w] or 0) for m in INTERVAL_RUNS) or None for w in range(n)]
-    return {"speed_100m": speed, "runs": runs, "total": total}
+    se_m, se_reps = [None] * n, [None] * n
+    for w in range(n):
+        k = kinds[w]
+        if not train[w]:
+            continue
+        base = TOURNAMENT_RUNS if tour_week[w] else INTERVAL_BASE[k]
+        for m, b in zip(INTERVAL_RUNS, base):
+            reps = (b if tour_week[w] else scale(b, w))
+            if reps and m in (120, 150) and not tour_week[w]:
+                reps += extra_reps
+            if m == 300 and "endurance" in weak and k in (GENERAL, SPECIAL):
+                reps += 1
+            runs[m][w] = reps or None
+        if tour_week[w]:
+            se_m[w], se_reps[w] = TOURNAMENT_SE
+        elif k in SPEED_ENDURANCE:
+            dist, b = SPEED_ENDURANCE[k]
+            r = scale(b, w) + (2 if "speed" in weak and k in (SPECIAL, PRECOMP, COMP) else 0)
+            se_m[w], se_reps[w] = dist, r
+    total = [sum(m * (runs[m][w] or 0) for m in INTERVAL_RUNS) + (se_m[w] or 0) * (se_reps[w] or 0) or None for w in range(n)]
+
+    # the player's other qualities, in the weeks the (player's own) Annual plan marks them
+    marks = {(s["name"], r["label"]): r["marks"] for s in g["sections"] for r in s["rows"]}
+    focus = []
+    for area, label, unit, rows, dose, extra in FOCUS_ROWS:
+        on = [any(marks.get(r, [False] * n)[w] for r in rows) for w in range(n)]
+        vals = [None] * n
+        for w in range(n):
+            if not train[w]:
+                continue
+            if tour_week[w]:
+                v = TOURNAMENT_FOCUS[area]
+            else:
+                v = int(dose[kinds[w]] * min(1.0, pct[w] / top[kinds[w]] + 0.25) + 0.5) if dose[kinds[w]] else 0
+                if not (on[w] or kinds[w] == TRANS):
+                    v = int(v / 2 + 0.5)                     # a lighter week the plan does not mark: half the dose (maintenance)
+                if v and area in weak:
+                    v += extra
+            vals[w] = v or None
+        focus.append({"area": area, "label": label, "unit": unit, "values": vals, "weak": area in weak})
+    return {"speed_100m": speed, "runs": runs, "speed_endurance_m": se_m, "speed_endurance_reps": se_reps, "total": total,
+            "focus": focus, "tournament_weeks": tour_week}
