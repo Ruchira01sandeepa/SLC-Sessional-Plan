@@ -179,3 +179,11 @@ table.macro th{position:sticky;left:0;background:var(--card);white-space:nowrap}
 .m-accumulation{background:color-mix(in srgb,#5aa469 22%,transparent)}.m-transmutation{background:color-mix(in srgb,#e3b341 25%,transparent)}
 .m-realization{background:color-mix(in srgb,#e07a5f 25%,transparent)}.m-competition{background:color-mix(in srgb,#4a90d9 22%,transparent)}
 .m-transition{background:color-mix(in srgb,#9aa5b1 25%,transparent)}.legend{gap:6px;margin:6px 0}
+
+/* test entry: trial grids, skinfold record, SOP summary */
+table.trials input{width:5.5em;min-width:0}
+table.trials td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+table.skinfolds td,table.skinfolds th{text-align:right;white-space:nowrap}
+table.skinfolds td:nth-child(2),table.skinfolds th:nth-child(2){text-align:left}
+dl.sop dt{font-weight:600;margin-top:.6em}
+dl.sop dd{margin:.15em 0 0 0}

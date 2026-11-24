@@ -27,7 +27,9 @@ from ..player_profile import physical_goal
 from ..age_groups import profile as age_profile
 from ..workload_rules import effective_limits
 from ..workload_service import sync_alerts
-from ..test_battery import AREAS, BY_KEY, LEVEL_LABEL, TRIALS, WINDOW_LABEL, WINDOWS, display
+from ..test_battery import (AREAS, BY_KEY, LEVEL_LABEL, LEVELS, SIT_REACH, SKINFOLD_SITES, SKINFOLD_LABEL, TRIALS, WINDOW_LABEL, WINDOWS,
+                            best_of, display, parse_skinfold, parse_value, skinfold_final, skinfold_sum, tests_for)
+from ..age_norms import plausible
 from ..physical_report_excel import build_physical_report
 from ..test_import import MAX_BYTES, parse_workbook
 from ..test_progress import progress as build_progress
@@ -113,7 +115,25 @@ def _session_out(s: TestSession) -> dict:
                           "final": _trial_shown(t, r.final_value), "setup": r.setup}
     return {"window": s.window.value, "window_label": WINDOW_LABEL[s.window.value], "level": s.level, "level_label": LEVEL_LABEL[s.level],
             "test_date": s.test_date.isoformat() if s.test_date else None, "height_cm": s.height_cm, "weight_kg": s.weight_kg,
-            "test_version": s.test_version, "surface": s.surface, "timing_method": s.timing_method, "notes": s.notes, "results": res}
+            "test_version": s.test_version, "surface": s.surface, "timing_method": s.timing_method, "notes": s.notes, "results": res,
+            "raw": {r.test_key: [r.trial_1, r.trial_2, r.trial_3] for r in s.results}, "extras": _extras(s)}
+
+
+def _extras(s: TestSession | None) -> dict:
+    """Sit and reach and the 8 skinfolds of one session (recorded and shown, not ranked)."""
+    by = {r.test_key: r for r in s.results} if s else {}
+    sr = by.get(SIT_REACH.key)
+    sites, finals = [], {}
+    for key, label in SKINFOLD_SITES:
+        r = by.get(key)
+        trials = [r.trial_1, r.trial_2, r.trial_3] if r else [None] * 3
+        final = r.final_value if r else None
+        finals[key] = final
+        sites.append({"key": key, "label": label, "trials": trials, "final": final,
+                      "third_needed": skinfold_final(trials)[1] if r and trials[2] is None else False, "note": r.setup if r else None})
+    return {"sit_reach": {"trials": [sr.trial_1, sr.trial_2, sr.trial_3], "final": sr.final_value, "note": sr.setup} if sr else None,
+            "skinfolds": sites, "skinfold_sum": skinfold_sum(finals), "third_needed": sum(1 for x in sites if x["third_needed"]),
+            "copied": sorted({x["note"] for x in sites if x["note"]})}
 
 
 def _test_goal(a: dict, t: dict, cohort: dict | None, window: str, age_group: str | None, gender: str) -> dict | None:
@@ -205,7 +225,8 @@ async def import_results(squad_id: int, request: Request, season_id: int, window
         raise HTTPException(422, "This file was made for a different squad, season or test window. Download the template again for the one you are importing.")
 
     accepted = [{"player_id": r["player_id"], "player": players[r["player_id"]], "level": r["level"], "level_label": LEVEL_LABEL[r["level"]], "sheet": r["sheet"], "row": r["row"],
-                 "results": {BY_KEY[k].label: display(BY_KEY[k], v["final"]) for k, v in r["results"].items()}}
+                 "results": {(BY_KEY[k].label if k in BY_KEY else SKINFOLD_LABEL.get(k, SIT_REACH.label) + (" skinfold" if k in SKINFOLD_LABEL else "")):
+                             (display(BY_KEY[k], v["final"]) if k in BY_KEY else f"{v['final']:g}") for k, v in r["results"].items()}}
                 for r in parsed["rows"]]
     out = {"saved": False, "accepted": accepted, "errors": parsed["errors"], "blank_rows": parsed["blank_rows"], "batch_id": None}
     if not confirm:
@@ -804,3 +825,187 @@ def sc_season_plans_zip(squad_id: int, season_id: int, window: str | None = None
     db.commit()
     name = _file_name("SC-season-plans", squad.name, plan["season"]["name"])
     return Response(buf.getvalue(), media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{name}.zip"'})
+
+
+# ───────────── enter results by hand (one player, one window): SOP tests, sit and reach, skinfolds ─────────────
+class TestEntryIn(BaseModel):
+    level: str | None = None
+    test_date: date | None = None
+    height_cm: float | None = Field(default=None, ge=120, le=200)
+    weight_kg: float | None = Field(default=None, ge=25, le=120)
+    results: dict[str, list[str | float | None]] = Field(default_factory=dict)       # test key -> up to 3 trials (blank = not done)
+
+
+@router.put("/players/{player_id}/tests/{season_id}/{window}")
+def enter_tests(player_id: int, season_id: int, window: str, body: TestEntryIn, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Save one player's trials typed in the Fitness results form. Same rules as the Excel import: three trials, the best valid one
+    counts (skinfolds: mean of two within 5%, else median of three); a blank trial stays blank; nothing is estimated."""
+    p = authorize_player(db, user, db.get(Player, player_id), "testing.write")
+    _season(db, p.squad_id, season_id)
+    window = _window(window)
+    sess = db.scalar(select(TestSession).where(TestSession.player_id == p.id, TestSession.season_id == season_id, TestSession.window == FitnessPhase(window)))
+    level = body.level or (sess.level if sess else "super_provincial")
+    if level not in LEVELS:
+        raise HTTPException(422, f"level must be one of {', '.join(LEVELS)}")
+    allowed = {t.key: t for t in tests_for(level)}
+    ag = p.squad.age_group if p.squad else None
+    errors, parsed = [], {}
+    for key, raw in body.results.items():
+        if len(raw) > 3:
+            errors.append(f"{key}: at most 3 trials")
+            continue
+        if key not in allowed and key != SIT_REACH.key and key not in SKINFOLD_LABEL:
+            errors.append(f"{BY_KEY[key].label if key in BY_KEY else key} is not a {LEVEL_LABEL[level]} test")
+            continue
+        test = allowed.get(key, SIT_REACH)
+        trials = []
+        for v in list(raw) + [None] * (3 - len(raw)):
+            if v is None or (isinstance(v, str) and not v.strip()):
+                trials.append(None)
+                continue
+            try:
+                trials.append(parse_skinfold(v) if key in SKINFOLD_LABEL else parse_value(test, v, plausible(key, ag) if key in allowed else None))
+            except ValueError as e:
+                errors.append(f"{SKINFOLD_LABEL.get(key, test.label)}: {e}")
+                trials.append(None)
+        parsed[key] = (trials, skinfold_final(trials)[0] if key in SKINFOLD_LABEL else best_of(test, trials))
+    if errors:
+        raise HTTPException(422, "; ".join(errors))
+    if sess is None:
+        sess = TestSession(player_id=p.id, season_id=season_id, window=FitnessPhase(window), level=level, cleared=True, tested_by=user.id)
+        db.add(sess)
+    sess.level = level
+    for k in ("test_date", "height_cm", "weight_kg"):
+        if k in body.model_fields_set:
+            setattr(sess, k, getattr(body, k))
+    for r in list(sess.results):                       # a level change drops the other level's tests
+        if r.test_key in BY_KEY and r.test_key not in allowed:
+            sess.results.remove(r)
+    by = {r.test_key: r for r in sess.results}
+    for key, (trials, final) in parsed.items():
+        r = by.get(key)
+        if final is None:
+            if r is not None:
+                sess.results.remove(r)
+            continue
+        if r is None:
+            r = TestResult(test_key=key)
+            sess.results.append(r)
+        r.trial_1, r.trial_2, r.trial_3, r.final_value = trials[0], trials[1], trials[2], final
+        if key not in BY_KEY:
+            r.setup = None                             # measured now: no longer copied from another player
+    db.flush()
+    if role_allows(user, "workload.write") and any(k in allowed for k in parsed):
+        log_test_day(db, user, p, sess)
+    audit(db, user, "test_results.entered", "player", p.id, f"window {window}, {len(parsed)} test(s)")
+    db.commit()
+    db.refresh(sess)
+    return _session_out(sess)
+
+
+@router.get("/squads/{squad_id}/seasons/{season_id}/body-tests")
+def body_tests(squad_id: int, season_id: int, window: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """The squad's skinfold record (8 sites and the sum) and sit and reach for one window, in squad-number order."""
+    authorize_squad(db, user, squad_id, "testing.read")
+    _season(db, squad_id, season_id)
+    window = _window(window)
+    players = list(db.scalars(select(Player).where(Player.squad_id == squad_id, Player.is_active)
+                              .order_by(Player.standby, Player.squad_no.is_(None), Player.squad_no, Player.full_name)))
+    sess = {s.player_id: s for s in db.scalars(select(TestSession).where(
+        TestSession.season_id == season_id, TestSession.window == FitnessPhase(window), TestSession.player_id.in_([p.id for p in players] or [-1])))}
+    rows = []
+    for p in players:
+        s = sess.get(p.id)
+        rows.append({"player_id": p.id, "name": p.full_name, "squad_no": p.squad_no, "standby": p.standby,
+                     "weight_kg": s.weight_kg if s else None, **_extras(s)})
+    sums = [r["skinfold_sum"] for r in rows if r["skinfold_sum"] is not None]
+    srs = [r["sit_reach"]["final"] for r in rows if r["sit_reach"]]
+    return {"window": window, "window_label": WINDOW_LABEL[window], "sites": [{"key": k, "label": lab} for k, lab in SKINFOLD_SITES], "players": rows,
+            "squad_mean_sum": round(sum(sums) / len(sums), 1) if sums else None,
+            "squad_mean_sit_reach": round(sum(srs) / len(srs), 1) if srs else None}
+
+
+@router.get("/squads/{squad_id}/seasons/{season_id}/test-results")
+def squad_test_results(squad_id: int, season_id: int, window: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """The Fitness page report for one window: every active player's results (level, date, height, weight, BMI, best trial of
+    every SOP test, sit and reach, skinfolds), the age-group reference per test, each player's change since their previous
+    test, and the squad averages of every test window on record (past tests)."""
+    from ..age_norms import age_band, reference
+    from ..test_progress import _change
+    authorize_squad(db, user, squad_id, "testing.read")
+    season = _season(db, squad_id, season_id)
+    window = _window(window)
+    squad = db.get(Squad, squad_id)
+    ag = squad.age_group or "U15"
+    players = list(db.scalars(select(Player).where(Player.squad_id == squad_id, Player.is_active)
+                              .order_by(Player.standby, Player.squad_no.is_(None), Player.squad_no, Player.full_name)))
+    # every test window on record for this squad, in time order (season start, then baseline / mid / end)
+    seasons = {x.id: x for x in db.scalars(select(Season).where(Season.squad_id == squad_id))}
+    worder = {w: i for i, w in enumerate(WINDOWS)}
+    all_sess = list(db.scalars(select(TestSession).where(TestSession.season_id.in_(list(seasons) or [-1]))))
+    slot = lambda x: (seasons[x.season_id].start_date, x.season_id, worder[x.window.value])
+    here = (season.start_date, season.id, worder[window])
+    by_slot: dict[tuple, list[TestSession]] = {}
+    for x in all_sess:
+        by_slot.setdefault(slot(x), []).append(x)
+    finals = lambda x: {r.test_key: r.final_value for r in x.results if r.final_value is not None and r.test_key in BY_KEY}
+
+    def _mean(vals):
+        vals = [v for v in vals if v is not None]
+        return sum(vals) / len(vals) if vals else None
+
+    history = []
+    for k in sorted(by_slot):
+        xs = by_slot[k]
+        fs = [finals(x) for x in xs]
+        sums = [_extras(x)["skinfold_sum"] for x in xs]
+        means = {}
+        for key, t in BY_KEY.items():
+            m = _mean([f.get(key) for f in fs])
+            if m is not None:
+                means[key] = {"value": round(m, 2), "display": display(t, round(m) if t.kind != "decimal" else m)}
+        x0 = xs[0]
+        dates = sorted(x.test_date for x in xs if x.test_date)
+        history.append({"season_id": x0.season_id, "season": seasons[x0.season_id].name, "window": x0.window.value,
+                        "window_label": WINDOW_LABEL[x0.window.value], "date": dates[0].isoformat() if dates else None,
+                        "tested": len(xs), "current": k == here, "means": means,
+                        "height_cm": _mean([x.height_cm for x in xs]), "weight_kg": _mean([x.weight_kg for x in xs]),
+                        "skinfold_sum": _mean(sums)})
+
+    current = {x.player_id: x for x in by_slot.get(here, [])}
+    earlier: dict[int, TestSession] = {}
+    for k in sorted(by_slot):
+        if k < here:
+            for x in by_slot[k]:
+                earlier[x.player_id] = x                                   # the latest earlier test wins
+    rows = []
+    for pl in players:
+        x = current.get(pl.id)
+        out = _session_out(x) if x else None
+        ex = out["extras"] if out else _extras(None)
+        vals = finals(x) if x else {}
+        prev = earlier.get(pl.id)
+        change = None
+        if x and prev:
+            pv = finals(prev)
+            change = {"label": f"{WINDOW_LABEL[prev.window.value]}, {seasons[prev.season_id].name}",
+                      "tests": {k: {**_change(BY_KEY[k], pv[k], v), "from": display(BY_KEY[k], pv[k])} for k, v in vals.items() if k in pv}}
+        rows.append({"player_id": pl.id, "name": pl.full_name, "role": pl.role.value, "squad_no": pl.squad_no, "standby": pl.standby,
+                     "level": x.level if x else None, "level_label": LEVEL_LABEL[x.level] if x else None,
+                     "test_date": out["test_date"] if out else None, "height_cm": x.height_cm if x else None, "weight_kg": x.weight_kg if x else None,
+                     "bmi": round(x.weight_kg / (x.height_cm / 100) ** 2, 1) if x and x.weight_kg and x.height_cm else None,
+                     "results": {k: v["final"] for k, v in out["results"].items()} if out else {},
+                     "trials": {k: v["trials"] for k, v in out["results"].items()} if out else {},
+                     "values": vals, "age": {k: (age_band(k, v, ag) or {}).get("band") for k, v in vals.items()}, "change": change,
+                     "sit_reach": ex["sit_reach"]["final"] if ex["sit_reach"] else None, "skinfold_sum": ex["skinfold_sum"],
+                     "skinfolds": {sf["key"]: sf["final"] for sf in ex["skinfolds"]}, "third_needed": ex["third_needed"], "copied": ex["copied"]})
+
+    def _ref(t):
+        r = reference(t.key, ag)
+        return None if r is None else {"developing": r[0], "expected": r[1], "strong": r[2],
+                                       "expected_display": display(t, r[1]), "strong_display": display(t, r[2])}
+    return {"window": window, "window_label": WINDOW_LABEL[window], "squad": squad.name, "age_group": ag,
+            "season": {"id": season.id, "name": season.name},
+            "tests": [{"key": t.key, "label": t.label, "unit": t.unit, "kind": t.kind, "levels": list(t.levels),
+                       "higher_is_better": t.higher_is_better, "reference": _ref(t)} for t in BY_KEY.values()],
+            "sites": [{"key": k, "label": lab} for k, lab in SKINFOLD_SITES], "players": rows, "history": history}

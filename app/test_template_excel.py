@@ -48,6 +48,8 @@ def build_template(*, squad: dict, season: dict, window: str, players: list[dict
         "Bronco is for Provincial players, the 2 km run for Super Provincial players. They are different tests and are not compared with each other.",
         "Record the push-up and inverted-row set-up (depth, bar height) in the set-up column. The national protocol fixes these details.",
         "Height and body weight are recorded for every player. They are not ranked.",
+        "Sit and reach (cm, 0 at the toes, past the toes is +): three trials, the best counts. Not ranked.",
+        "Skinfolds (mm, right side, ISAK 8 sites): two measures per site; take a third if the two differ by more than 5%. Mean of two or median of three counts. Not ranked.",
         "Results are confidential and are shared only with authorised staff.",
         "Plausible ranges (to catch typing errors, not standards):",
     ]
@@ -84,6 +86,8 @@ def build_template(*, squad: dict, season: dict, window: str, players: list[dict
             for c, h in enumerate(cols, 1):
                 if "(mm.ss)" in h or "(s)" in h or "(cm)" in h or "(kg)" in h:
                     ws.cell(row=i, column=c).number_format = "0.00"
+                elif "(mm)" in h:
+                    ws.cell(row=i, column=c).number_format = "0.0"
         ws.freeze_panes = "C2"
     buf = BytesIO()
     wb.save(buf)

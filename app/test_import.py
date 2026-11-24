@@ -12,7 +12,8 @@ from io import BytesIO
 
 from openpyxl import load_workbook
 
-from .test_battery import ANTHRO, LEVEL_LABEL, LEVELS, TRIALS, best_of, parse_value, tests_for
+from .test_battery import (ANTHRO, LEVEL_LABEL, LEVELS, SIT_REACH, SKINFOLD_SITES, TRIALS, best_of, parse_skinfold, parse_value,
+                           skinfold_final, tests_for)
 from .age_norms import plausible
 
 MAX_BYTES = 2_000_000
@@ -31,15 +32,27 @@ def setup_header(test) -> str:
     return f"{test.label} set-up"
 
 
-def columns(level: str) -> list[str]:
-    """Header row of a level's sheet, in order."""
+def skinfold_header(label: str, i: int) -> str:
+    return f"{label} skinfold {i} (mm)"
+
+
+def extra_columns() -> list[str]:
+    """Sit and reach (3 trials) and the 8 skinfold sites (up to 3 measures each). Not ranked."""
+    cols = [trial_header(SIT_REACH, i) for i in range(1, TRIALS + 1)]
+    for _, label in SKINFOLD_SITES:
+        cols += [skinfold_header(label, i) for i in range(1, 4)]
+    return cols
+
+
+def columns(level: str, extras: bool = True) -> list[str]:
+    """Header row of a level's sheet, in order. extras=False is the older template (no sit and reach or skinfolds)."""
     cols = ["Player ID", "Player name", "Cleared (Yes/No)", "Test date (YYYY-MM-DD)", "Height (cm)", "Body weight (kg)",
             "Test version", "Course / surface", "Timing method"]
     for t in tests_for(level):
         cols += [trial_header(t, i) for i in range(1, TRIALS + 1)]
         if t.setup:
             cols.append(setup_header(t))
-    return cols + ["Notes"]
+    return cols + (extra_columns() if extras else []) + ["Notes"]
 
 
 def _clean(v) -> str | None:
@@ -85,8 +98,11 @@ def parse_workbook(data: bytes, players: dict[int, str], age_group: str | None =
         ws = wb[name]
         it = ws.iter_rows(values_only=True)
         head = next(it, None)
+        got = [str(h).strip() if h is not None else "" for h in head] if head is not None else []
         want = columns(level)
-        if head is None or [str(h).strip() if h is not None else "" for h in head[:len(want)]] != want:
+        if got[:len(want)] != want:
+            want = columns(level, extras=False)                    # an older template still imports
+        if got[:len(want)] != want:
             raise ValueError(f"The '{name}' sheet columns do not match the template. Download a fresh template and copy the results across.")
         idx = {h: i for i, h in enumerate(want)}
         for n, raw in enumerate(it, start=2):
@@ -94,7 +110,9 @@ def parse_workbook(data: bytes, players: dict[int, str], age_group: str | None =
                 raise ValueError(f"More than {MAX_ROWS} rows on '{name}'. Upload the template for one squad.")
             cell = lambda h: raw[idx[h]] if idx[h] < len(raw) else None
             tests = tests_for(level)
+            extra_cols = [h for h in extra_columns() if h in idx]
             filled = any(not _blank(cell(trial_header(t, i))) for t in tests for i in range(1, TRIALS + 1)) \
+                or any(not _blank(cell(h)) for h in extra_cols) \
                 or not _blank(cell("Height (cm)")) or not _blank(cell("Body weight (kg)"))
             if not filled:
                 blank_rows += 1
@@ -174,6 +192,24 @@ def parse_workbook(data: bytes, players: dict[int, str], age_group: str | None =
                 final = best_of(t, trials)
                 if final is not None or setup:
                     results[t.key] = {"trials": trials, "final": final, "setup": setup}
+            if extra_cols:                                            # sit and reach, skinfolds
+                specs = [(SIT_REACH.key, [trial_header(SIT_REACH, i) for i in range(1, TRIALS + 1)], lambda v: parse_value(SIT_REACH, v), None)]
+                specs += [(key, [skinfold_header(label, i) for i in range(1, 4)], parse_skinfold, True) for key, label in SKINFOLD_SITES]
+                for key, heads, parse, is_sf in specs:
+                    trials = []
+                    for h in heads:
+                        v = cell(h)
+                        if _blank(v):
+                            trials.append(None)
+                            continue
+                        try:
+                            trials.append(parse(v))
+                        except ValueError as e:
+                            err(name, n, h, str(e))
+                            trials.append(None)
+                    final = skinfold_final(trials)[0] if is_sf else best_of(SIT_REACH, trials)
+                    if final is not None:
+                        results[key] = {"trials": trials, "final": final, "setup": None}
             if len(errors) == before:
                 rows.append({"level": level, "sheet": name, "row": n, "player_id": pid, "test_date": tdate, "height_cm": height,
                              "weight_kg": weight, "version": texts["version"], "surface": texts["surface"], "timing": texts["timing"],

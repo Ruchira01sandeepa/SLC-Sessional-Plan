@@ -36,12 +36,25 @@ class WorkloadIn(BaseModel):
     keeping_minutes: int | None = Field(default=None, ge=0, le=480)
     throws: int | None = Field(default=None, ge=0, le=300)
     match_participation: str | None = Field(default=None, max_length=30)
+    # heart rate and external load (all optional; McGawley workshop: measure internal AND external load)
+    hr_avg: int | None = Field(default=None, ge=40, le=230)
+    zone_minutes: list[float] | None = Field(default=None, max_length=5)      # 50-60, 60-70, 70-80, 80-90, 90-100% HRmax
+    hit_minutes: float | None = Field(default=None, ge=0, le=480)
+    sprint_m: int | None = Field(default=None, ge=0, le=20000)
+    volume_load_kg: float | None = Field(default=None, ge=0, le=200000)
+    foot_contacts: int | None = Field(default=None, ge=0, le=3000)
+    sprint_times: list[float] | None = Field(default=None, max_length=40)
     event_id: int | None = None
 
     @model_validator(mode="after")
     def _consistent(self):
         measures = (self.duration_min, self.session_intensity, self.rpe, self.balls_bowled, self.overs_bowled, self.spells,
-                    self.balls_faced, self.keeping_minutes, self.throws)
+                    self.balls_faced, self.keeping_minutes, self.throws, self.hr_avg, self.zone_minutes, self.hit_minutes, self.sprint_m,
+                    self.volume_load_kg, self.foot_contacts, self.sprint_times)
+        if self.zone_minutes is not None and any(m is None or m < 0 or m > 480 for m in self.zone_minutes):
+            raise ValueError("Heart-rate zone minutes are 0 to 480 each (five zones: 50-60, 60-70, 70-80, 80-90, 90-100% HRmax)")
+        if self.sprint_times is not None and any(t is None or not 1 <= t <= 120 for t in self.sprint_times):
+            raise ValueError("Sprint times are seconds, 1 to 120 each")
         if not self.attended and any(m not in (None, [], 0) for m in measures):
             raise ValueError("A session the player did not attend cannot have load or bowling figures")
         balls = None
@@ -81,6 +94,14 @@ class WorkloadPatch(BaseModel):
     keeping_minutes: int | None = Field(default=None, ge=0, le=480)
     throws: int | None = Field(default=None, ge=0, le=300)
     match_participation: str | None = Field(default=None, max_length=30)
+    # heart rate and external load (all optional; McGawley workshop: measure internal AND external load)
+    hr_avg: int | None = Field(default=None, ge=40, le=230)
+    zone_minutes: list[float] | None = Field(default=None, max_length=5)      # 50-60, 60-70, 70-80, 80-90, 90-100% HRmax
+    hit_minutes: float | None = Field(default=None, ge=0, le=480)
+    sprint_m: int | None = Field(default=None, ge=0, le=20000)
+    volume_load_kg: float | None = Field(default=None, ge=0, le=200000)
+    foot_contacts: int | None = Field(default=None, ge=0, le=3000)
+    sprint_times: list[float] | None = Field(default=None, max_length=40)
 
 
 class WorkloadOut(BaseModel):
@@ -101,6 +122,13 @@ class WorkloadOut(BaseModel):
     keeping_minutes: int | None
     throws: int | None
     match_participation: str | None
+    hr_avg: int | None = None
+    zone_minutes: list | None = None
+    hit_minutes: float | None = None
+    sprint_m: int | None = None
+    volume_load_kg: float | None = None
+    foot_contacts: int | None = None
+    sprint_times: list | None = None
     load: float | None = None
     load_basis: str | None = None
 
@@ -333,13 +361,31 @@ def overview(squad_id: int, as_of: date | None = None, db: Session = Depends(get
     out = []
     players = list(db.scalars(select(Player).where(Player.squad_id == squad_id, Player.is_active.is_(True)).order_by(Player.full_name)))
     evals = evaluate_players(db, players, day)
+    # batting and keeping in the same 7 days, plus the longest spell (for the fast-bowler limit check)
+    bat: dict[int, dict] = {p.id: {"balls": 0, "days": set(), "keep": 0, "spell": 0.0} for p in players}
+    if players:
+        for r in db.scalars(select(WorkloadLog).where(WorkloadLog.player_id.in_(list(bat)), WorkloadLog.attended.is_(True),
+                                                      WorkloadLog.log_date > day - timedelta(days=7), WorkloadLog.log_date <= day)):
+            b = bat[r.player_id]
+            if r.balls_faced:
+                b["balls"] += r.balls_faced
+                b["days"].add(r.log_date)
+            b["keep"] += r.keeping_minutes or 0
+            for sp in r.spells or []:
+                o = sp.get("overs") if isinstance(sp, dict) else None
+                if o:
+                    b["spell"] = max(b["spell"], float(o))
     for p in players:
         alerts, s = evals[p.id]
+        bw, b = s["bowling"], bat[p.id]
         out.append({"player_id": p.id, "name": p.full_name, "role": p.role.value, "availability": p.availability.value,
                     "acute_load_7d": s["acute_load_7d"], "acwr": s["acwr"], "acwr_status": s["acwr_status"],
-                    "vs_last_week_pct": s["vs_last_week_pct"], "overs_7d": s["bowling"]["overs_7d"],
-                    "bowling_days_7d": len(s["bowling"]["days_bowled_7d"]), "history_days": s["history_days"],
-                    "worst_severity": s["alerts_worst"], "alert_count": len(alerts)})
+                    "vs_last_week_pct": s["vs_last_week_pct"], "overs_7d": bw["overs_7d"],
+                    "bowling_days_7d": len(bw["days_bowled_7d"]),
+                    "max_day_overs_7d": max(bw["overs_by_day"].values(), default=0), "max_spell_7d": b["spell"] or None,
+                    "bowling_limits": bw["limits"],
+                    "balls_faced_7d": b["balls"], "batting_days_7d": len(b["days"]), "keeping_minutes_7d": b["keep"],
+                    "history_days": s["history_days"], "worst_severity": s["alerts_worst"], "alert_count": len(alerts)})
     return out
 
 
@@ -465,3 +511,146 @@ def put_earlier(squad_id: int, body: EarlierWeek, db: Session = Depends(get_db),
     audit(db, user, "workload.earlier_saved", "squad", squad_id, f"week {start}: {saved} saved, {cleared} cleared")
     db.commit()
     return {"week_start": start, "saved": saved, "cleared": cleared}
+
+
+# ───────────── the weekly workload report (McGawley workshop: sRPE, monotony, strain, change, ACWR, TRIMP, external load) ─────────────
+class HeartRateIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    hr_max: int | None = Field(default=None, ge=150, le=230)
+    hr_rest: int | None = Field(default=None, ge=30, le=110)
+
+
+@router.put("/players/{player_id}/heart-rate")
+def set_heart_rate(player_id: int, body: HeartRateIn, db: Session = Depends(get_db), user: User = Depends(require("workload.limits"))):
+    """The player's measured maximum and resting heart rate (for Edwards and Banister TRIMP)."""
+    player = _player(db, user, player_id, "workload.limits")
+    if body.hr_max and body.hr_rest and body.hr_rest >= body.hr_max:
+        raise HTTPException(422, "The resting heart rate must be below the maximum")
+    player.hr_max, player.hr_rest = body.hr_max, body.hr_rest
+    audit(db, user, "player.heart_rate_set", "player", player.id)
+    db.commit()
+    return {"hr_max": player.hr_max, "hr_rest": player.hr_rest}
+
+
+def _session_dicts(rows) -> list[dict]:
+    return [{"date": r.log_date, "type": r.session_type.value, "attended": r.attended, "minutes": r.duration_min, "rpe": r.rpe,
+             "intensity": r.session_intensity, "hr_avg": r.hr_avg, "zone_minutes": r.zone_minutes, "hit_minutes": r.hit_minutes,
+             "sprint_m": r.sprint_m, "volume_load_kg": r.volume_load_kg, "foot_contacts": r.foot_contacts, "sprint_times": r.sprint_times,
+             "overs": r.overs_bowled, "id": r.id} for r in rows]
+
+
+def _player_week(db: Session, p: Player, monday: date) -> dict:
+    from ..workload_calc import estimated_hr_max, week_report
+    rows = list(db.scalars(select(WorkloadLog).where(WorkloadLog.player_id == p.id, WorkloadLog.log_date <= monday + timedelta(days=6))
+                           .order_by(WorkloadLog.log_date, WorkloadLog.id)))
+    hist = _session_dicts(rows)
+    week = [x for x in hist if monday <= x["date"] <= monday + timedelta(days=6)]
+    well = [{"date": w.log_date, "soreness": w.soreness, "fatigue": w.fatigue, "sleep_hours": w.sleep_hours}
+            for w in db.scalars(select(WellnessLog).where(WellnessLog.player_id == p.id, WellnessLog.log_date >= monday,
+                                                          WellnessLog.log_date <= monday + timedelta(days=6)))]
+    age = (monday - p.date_of_birth).days / 365.25 if p.date_of_birth else None
+    hr_max = p.hr_max or estimated_hr_max(age)
+    rep = week_report(week, monday, history=hist, wellness=well, hr_rest=p.hr_rest, hr_max=hr_max, sex=p.gender.value)
+    rep["player"] = {"id": p.id, "name": p.full_name, "role": p.role.value, "squad_no": p.squad_no, "hr_max": p.hr_max, "hr_rest": p.hr_rest,
+                     "hr_max_used": hr_max, "hr_max_estimated": not p.hr_max and hr_max is not None}
+    return rep
+
+
+def _monday(d: date | None) -> date:
+    d = d or today_lk()
+    return d - timedelta(days=d.weekday())
+
+
+def _planned_pct(db: Session, user: User, squad_id: int, monday: date) -> float | None:
+    """The annual plan's planned load % for the week (the season that holds the week), for 'measured vs planned'."""
+    from ..models import Season
+    from .plans import _grid
+    season = db.scalar(select(Season).where(Season.squad_id == squad_id, Season.start_date <= monday + timedelta(days=6))
+                       .order_by(Season.start_date.desc()).limit(1))
+    if season is None:
+        return None
+    try:
+        g = _grid(db, user, squad_id, season.id)
+    except HTTPException:
+        return None
+    w = (monday + timedelta(days=2) - g["week_starts"][0]).days // 7
+    return round(g["percentage"][w] * 100) if 0 <= w < g["weeks"] else None
+
+
+def _jsonable(rep: dict) -> dict:
+    out = dict(rep)
+    out["monday"], out["sunday"] = rep["monday"].isoformat(), rep["sunday"].isoformat()
+    out["days"] = [{**d, "date": d["date"].isoformat(), "sessions": [{**x, "date": x["date"].isoformat()} for x in d["sessions"]]} for d in rep["days"]]
+    return out
+
+
+@router.get("/players/{player_id}/workload/week")
+def player_week(player_id: int, week_start: date | None = None, db: Session = Depends(get_db), user: User = Depends(require("workload.read"))):
+    """One player's week, Monday to Sunday, as in the workshop's example week: each day's sessions (minutes, RPE, load), the
+    weekly load, mean and SD of the daily load, monotony, strain, change on last week, ACWR, weekly load %, TRIMP and external load."""
+    p = _player(db, user, player_id, "workload.read")
+    return _jsonable(_player_week(db, p, _monday(week_start)))
+
+
+def _squad_week(db: Session, user: User, squad_id: int, week_start: date | None):
+    authorize_squad(db, user, squad_id, "alerts.read")
+    monday = _monday(week_start)
+    players = list(db.scalars(select(Player).where(Player.squad_id == squad_id, Player.is_active.is_(True))
+                              .order_by(Player.squad_no.is_(None), Player.squad_no, Player.full_name)))
+    return monday, [_player_week(db, p, monday) for p in players], _planned_pct(db, user, squad_id, monday)
+
+
+@router.get("/squads/{squad_id}/workload/week")
+def squad_week(squad_id: int, week_start: date | None = None, db: Session = Depends(get_db), user: User = Depends(require("alerts.read"))):
+    monday, reps, planned = _squad_week(db, user, squad_id, week_start)
+    keys = ("sessions", "total", "mean_daily", "sd_daily", "monotony", "strain", "previous_week", "change_pct", "acwr", "acwr_band",
+            "load_pct", "edwards_trimp", "banister_trimp", "hit_minutes", "sprint_m", "volume_load_kg", "foot_contacts", "sdec", "flags")
+    return {"monday": monday.isoformat(), "planned_pct": planned,
+            "players": [{"player_id": r["player"]["id"], "name": r["player"]["name"], "role": r["player"]["role"],
+                         **{k: r[k] for k in keys}, "wellness": r["wellness"]} for r in reps]}
+
+
+@router.get("/squads/{squad_id}/workload/report.xlsx")
+def squad_week_report(squad_id: int, week_start: date | None = None, db: Session = Depends(get_db), user: User = Depends(require("alerts.read"))):
+    """The weekly workload report in Excel: the squad week, each player's week (Mon-Sun table with formulas), the 8-week trend,
+    the test change (pre -> post, % change and effect size), the formulas and the process."""
+    import re
+    from fastapi.responses import Response
+    from ..models import Squad
+    from ..workload_excel import build_workload_workbook
+    monday, reps, planned = _squad_week(db, user, squad_id, week_start)
+    squad = db.get(Squad, squad_id)
+    trend = {r["player"]["id"]: [_player_week(db, db.get(Player, r["player"]["id"]), monday - timedelta(days=7 * k))["total"]
+                                 for k in range(7, -1, -1)] for r in reps}
+    tests = _test_change(db, squad_id)
+    audit(db, user, "workload.report_exported", "squad", squad_id)
+    db.commit()
+    name = re.sub(r"[^A-Za-z0-9]+", "-", f"Workload-report-{squad.name}-week-of-{monday.isoformat()}").strip("-")
+    return Response(build_workload_workbook(squad.name, monday, reps, planned, trend, tests),
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="{name}.xlsx"'})
+
+
+def _test_change(db: Session, squad_id: int) -> dict:
+    """The same tests, first window -> latest window of the latest season with results: % change and effect size per test."""
+    from ..models import Season
+    from ..test_battery import BY_KEY, WINDOW_LABEL
+    from ..workload_calc import test_change
+    from .testing import _finals, _windows_for
+    for season in db.scalars(select(Season).where(Season.squad_id == squad_id).order_by(Season.start_date.desc())):
+        wins = _windows_for(db, squad_id, season.id)
+        if not wins:
+            continue
+        order = list(wins)
+        pre_w, post_w = order[0], order[-1]
+        pre = {pid: _finals(s) for pid, s in wins[pre_w][1].items()}
+        post = {pid: _finals(s) for pid, s in wins[post_w][1].items()}
+        rows = []
+        for key, t in BY_KEY.items():
+            a = {pid: f[key] for pid, f in pre.items() if f.get(key) is not None}
+            b = {pid: f[key] for pid, f in post.items() if f.get(key) is not None}
+            if a:
+                rows.append({"test": t.label, "unit": t.unit, "lower_is_better": not t.higher_is_better,
+                             **(test_change(a, b, not t.higher_is_better) if post_w != pre_w else {"n": 0, "pre_mean": sum(a.values()) / len(a)})})
+        return {"season": season.name, "pre": WINDOW_LABEL[pre_w], "post": WINDOW_LABEL[post_w] if post_w != pre_w else None, "rows": rows}
+    return {"season": None, "pre": None, "post": None, "rows": []}

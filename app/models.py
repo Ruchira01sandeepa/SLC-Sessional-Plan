@@ -208,6 +208,8 @@ class Player(Base):
     captaincy: Mapped[str | None] = mapped_column(String(20))                  # None / "captain" / "vice_captain"
     standby: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())   # squad sheet: "Stand By" list
 
+    hr_max: Mapped[int | None] = mapped_column(Integer)                        # measured max heart rate (bpm), for TRIMP
+    hr_rest: Mapped[int | None] = mapped_column(Integer)                       # resting heart rate (bpm), for Banister TRIMP
     batting_hand: Mapped[str | None] = mapped_column(String(10))               # Fitness Report: "Batting hand"
     bowling_arm: Mapped[str | None] = mapped_column(String(10))                # Fitness Report: "Bowling arm"
     front_side: Mapped[str | None] = mapped_column(String(10))                 # Fitness Report: "Front side"
@@ -588,6 +590,14 @@ class WorkloadLog(Base):
     keeping_minutes: Mapped[int | None] = mapped_column(Integer)
     throws: Mapped[int | None] = mapped_column(Integer)
     match_participation: Mapped[str | None] = mapped_column(String(30))
+    # heart rate and external load (McGawley workshop: internal + external load, measure both). All optional.
+    hr_avg: Mapped[int | None] = mapped_column(Integer)                          # average heart rate in the session (bpm)
+    zone_minutes: Mapped[list | None] = mapped_column(JSON)                      # minutes at 50-60, 60-70, 70-80, 80-90, 90-100% HRmax
+    hit_minutes: Mapped[float | None] = mapped_column(Float)                     # minutes at >= 90% HRmax
+    sprint_m: Mapped[int | None] = mapped_column(Integer)                        # metres of maximal sprinting
+    volume_load_kg: Mapped[float | None] = mapped_column(Float)                  # sets x reps x %1RM x 1RM, summed over the lifts
+    foot_contacts: Mapped[int | None] = mapped_column(Integer)                   # jumps / bounds / landings
+    sprint_times: Mapped[list | None] = mapped_column(JSON)                      # repeated-sprint times (s) -> performance decrement
     recorded_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 

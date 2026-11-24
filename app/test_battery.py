@@ -47,7 +47,7 @@ TESTS: tuple[Test, ...] = (
     Test("inverted_row", "Inverted row", "valid reps", "count", True, "upper_strength", (SUPER,), 0, 100, setup=True),
     Test("sprint_20m", "20 m sprint", "s", "decimal", False, "speed", (SUPER,), 2.5, 6.0),
     Test("shuttle_5_10_5", "5-10-5 shuttle", "s", "decimal", False, "agility", (SUPER,), 3.5, 10.0),
-    Test("plank", "Standard plank", "s", "decimal", True, "core", (SUPER,), 5, 600),
+    Test("plank", "Standard plank", "s", "decimal", True, "core", (SUPER,), 5, 720),
 )
 BY_KEY = {t.key: t for t in TESTS}
 TRIALS = 3
@@ -144,3 +144,49 @@ def display(test: Test, value: float | None) -> str | None:
     if test.kind == "count":
         return str(int(value))
     return f"{value:.2f}"
+
+
+# ───────────── extra measures: sit and reach, and skinfolds (recorded and shown, NOT ranked or used for bands) ─────────────
+# Sit and reach: hamstring / lower-back flexibility, cm reached (box with 0 at the toes: past the toes is +, short of them is -).
+# Skinfolds: the ISAK 8 sites, right side, mm. Two measures per site; if they differ by more than 5% a third is taken and the
+# median counts, otherwise the mean of the two. The sum of 8 skinfolds tracks body fat over time without a % fat equation.
+SIT_REACH = Test("sit_reach", "Sit and reach", "cm", "decimal", True, "flexibility", LEVELS, -30, 60)
+SKINFOLD_SITES = (("sf_triceps", "Triceps"), ("sf_subscapular", "Subscapular"), ("sf_biceps", "Biceps"), ("sf_iliac_crest", "Iliac crest"),
+                  ("sf_supraspinale", "Supraspinale"), ("sf_abdominal", "Abdominal"), ("sf_front_thigh", "Front thigh"),
+                  ("sf_medial_calf", "Medial calf"))
+SKINFOLD_LABEL = dict(SKINFOLD_SITES)
+SKINFOLD_RANGE = (2.0, 60.0)                         # mm, to catch typing errors only
+SKINFOLD_TOLERANCE = 0.05                            # ISAK: a third measure when the first two differ by more than 5%
+EXTRA_KEYS = (SIT_REACH.key, *SKINFOLD_LABEL)
+
+
+def parse_skinfold(value) -> float:
+    if isinstance(value, bool):
+        raise ValueError("not a number")
+    try:
+        v = round(float(str(value).strip()), 1)
+    except ValueError:
+        raise ValueError(f"'{value}' is not a number") from None
+    lo, hi = SKINFOLD_RANGE
+    if not lo <= v <= hi:
+        raise ValueError(f"Skinfold {v} mm is outside the plausible range {lo:g} to {hi:g} mm - check the entry")
+    return v
+
+
+def skinfold_final(trials: list[float | None]) -> tuple[float | None, bool]:
+    """(final value, third measure needed). Mean of two within 5%; median of three; one measure counts on its own."""
+    t = [v for v in trials[:3] if v is not None]
+    if not t:
+        return None, False
+    if len(t) == 1:
+        return round(t[0], 1), False
+    if len(t) >= 3:
+        return round(sorted(t)[1], 1), False
+    a, b = t
+    return round((a + b) / 2, 1), abs(a - b) / min(a, b) > SKINFOLD_TOLERANCE
+
+
+def skinfold_sum(finals: dict) -> float | None:
+    """Sum of 8 skinfolds, only when all 8 sites have a value (a partial sum would look like a leaner player)."""
+    vals = [finals.get(k) for k in SKINFOLD_LABEL]
+    return round(sum(vals), 1) if all(v is not None for v in vals) else None

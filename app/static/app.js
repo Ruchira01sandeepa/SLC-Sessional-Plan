@@ -7,7 +7,7 @@
 // (`cond ? node : null`) are used everywhere here, so make both calls skip empty values (and unwrap arrays).
 for (const name of ["append", "replaceChildren"]) {
   const native = Element.prototype[name];
-  Element.prototype[name] = function (...kids) { return native.apply(this, kids.flat().filter((k) => k != null && k !== false)); };
+  Element.prototype[name] = function (...kids) { return native.apply(this, kids.flat(Infinity).filter((k) => k != null && k !== false)); };
 }
 const $ = (s) => document.querySelector(s);
 const T = (k) => (I18N[LANG] && I18N[LANG][k]) || I18N.en[k] || k;      // translation hook (Sinhala/Tamil arrive in Phase 6)
@@ -23,7 +23,7 @@ function h(tag, props, ...kids) {
     else if (k in el && k !== "list" && k !== "form") el[k] = v;
     else el.setAttribute(k, v === true ? "" : v);
   }
-  for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+  for (const kid of kids.flat(Infinity)) if (kid != null && kid !== false) el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
   return el;
 }
 const fmt = (v, d = 2) => (v == null ? "–" : typeof v === "number" ? +v.toFixed(d) : v);
@@ -372,7 +372,7 @@ function go(tab) {
   if (tab !== "physical") S.athletePid = null;
   S.tab = tab; drawTabs();
   Charts.hide();
-  document.body.classList.toggle("wide", tab === "overview");
+  document.body.classList.toggle("wide", tab === "overview" || tab === "fitness");
   const view = { overview: overviewTab, players: S.pid ? () => playerView(S.pid) : playersTab, calendar: calendarTab, fitness: fitnessTab, workload: workloadTab, physical: physicalTab, tests: testingTab, plan: () => planTab(), admin: adminTab }[tab];
   Promise.resolve(view()).catch((x) => $("#main").replaceChildren(h("div", { class: "err" }, x.message)));
 }
@@ -444,11 +444,38 @@ async function overviewTab() {
     refs: [{ value: 1.3, label: "1.3" }, { value: 1.5, label: "1.5" }],
     empty: "No player has 3 weeks of logged sessions yet, so there is no load ratio." });
 
-  const bowlers = rows.filter((r) => BOWLS.includes(r.role)).sort((a, b) => (b.overs_7d || 0) - (a.overs_7d || 0));
-  const oversChart = Charts.hbars({ ariaLabel: "Overs bowled in the last 7 days", format: (v) => Charts.num(v, 1),
-    data: bowlers.map((r) => ({ label: r.name, sub: `${r.bowling_days_7d} bowling day(s)`, value: r.overs_7d || 0, cls: ROLE_CLS[r.role], onClick: openPlayer(r.player_id),
-      display: Charts.num(r.overs_7d || 0, 1), tip: [r.name, `${Charts.num(r.overs_7d || 0, 1)} overs in 7 days`, `${r.bowling_days_7d} bowling day(s)`, ROLE[r.role]] })),
-    empty: "No bowlers in this squad." });
+  // bowling, split into fast and spin; each fast bowler is checked against the spell / day / days-in-7 limits
+  const overLimit = (r) => {
+    const L = r.bowling_limits; if (!L) return [];
+    return [L.max_spell_overs && r.max_spell_7d > L.max_spell_overs ? `longest spell ${Charts.num(r.max_spell_7d, 1)} > ${L.max_spell_overs}` : null,
+      L.max_match_day_overs && r.max_day_overs_7d > L.max_match_day_overs ? `${Charts.num(r.max_day_overs_7d, 1)} overs in a day > ${L.max_match_day_overs}` : null,
+      L.max_bowling_days_week && r.bowling_days_7d > L.max_bowling_days_week ? `${r.bowling_days_7d} bowling days > ${L.max_bowling_days_week}` : null].filter(Boolean);
+  };
+  const oversBars = (list, label, empty) => Charts.hbars({ ariaLabel: label, format: (v) => Charts.num(v, 1),
+    data: [...list].sort((a, b) => (b.overs_7d || 0) - (a.overs_7d || 0)).map((r) => {
+      const over = overLimit(r);
+      return { label: r.name, value: r.overs_7d || 0, cls: over.length ? "c-critical" : ROLE_CLS[r.role], onClick: openPlayer(r.player_id),
+        sub: [`${r.bowling_days_7d} day(s)`, r.max_day_overs_7d ? `max ${Charts.num(r.max_day_overs_7d, 1)} in a day` : null,
+          r.max_spell_7d ? `spell ${Charts.num(r.max_spell_7d, 1)}` : null, r.role === "all_rounder" ? "all-rounder" : null].filter(Boolean).join(" · "),
+        display: Charts.num(r.overs_7d || 0, 1) + (over.length ? " ⚠" : ""),
+        tip: [r.name, `${Charts.num(r.overs_7d || 0, 1)} overs in 7 days`, `${r.bowling_days_7d} bowling day(s)`, ROLE[r.role], ...over] };
+    }), empty });
+  const fast = rows.filter((r) => r.role === "fast_bowler");
+  const spin = rows.filter((r) => r.role === "spin_bowler" || r.role === "all_rounder");
+  const fastOver = fast.filter((r) => overLimit(r).length).length;
+  const fastSub = (lim ? `${S.squad.age_group} fast-bowler limits: ${lim.max_spell_overs} a spell · ${lim.max_match_day_overs} a day · ${lim.max_bowling_days_week} days in 7` : "")
+    + (fastOver ? ` · ${fastOver} over a limit` : fast.length ? " · all within limits" : "");
+
+  // batting: balls faced, batting days and keeping minutes in the same 7 days
+  const batters = rows.filter((r) => BATS.includes(r.role));
+  const battingChart = Charts.hbars({ ariaLabel: "Balls faced in the last 7 days",
+    data: [...batters].sort((a, b) => (b.balls_faced_7d || 0) - (a.balls_faced_7d || 0)).map((r) => ({ label: r.name, value: r.balls_faced_7d || 0,
+      cls: ROLE_CLS[r.role], onClick: openPlayer(r.player_id), display: (r.balls_faced_7d || 0).toLocaleString(),
+      sub: [`${r.batting_days_7d} batting day(s)`, r.keeping_minutes_7d ? `${r.keeping_minutes_7d} min keeping` : null, r.role !== "batter" ? ROLE[r.role] : null].filter(Boolean).join(" · "),
+      tip: [r.name, `${r.balls_faced_7d || 0} balls faced in 7 days`, `${r.batting_days_7d} batting day(s)`, r.keeping_minutes_7d ? `${r.keeping_minutes_7d} min keeping` : null, ROLE[r.role]] })),
+    empty: "No batters in this squad." });
+  const totalBalls = batters.reduce((a, r) => a + (r.balls_faced_7d || 0), 0);
+  const batSub = `Balls faced (net and match). ${totalBalls.toLocaleString()} in total` + (batters.length ? ` · ${batters.filter((r) => !r.balls_faced_7d).length} with none logged` : "");
 
   const upcoming = events.length ? h("ol", { class: "agenda" }, events.slice(0, 6).map((e) => {
     const d = new Date(fixTz(e.start_at));
@@ -473,7 +500,11 @@ async function overviewTab() {
     h("div", { class: "dash-grid wide-left" },
       card("Load ratio", "7-day ÷ 4-week average. Raised above 1.3, high above 1.5." + (waiting ? ` ${waiting} need 3 weeks of logs.` : ""), ratioChart),
       card("Coming up", "Next 14 days", upcoming)),
-    bowlers.length ? card("Bowling, last 7 days", lim ? `${S.squad.age_group} fast-bowler limits: ${lim.max_spell_overs} a spell · ${lim.max_match_day_overs} a day · ${lim.max_bowling_days_week} days in 7` : null, oversChart) : null);
+    fast.length || spin.length ? h("div", { class: "dash-grid two" },
+      card("Fast bowling, last 7 days", fastSub, oversBars(fast, "Overs by fast bowlers in the last 7 days", "No fast bowlers in this squad.")),
+      card("Spin bowling, last 7 days", "Spinners and all-rounders. No automatic limit; the coach sets one per player if needed.",
+        oversBars(spin, "Overs by spin bowlers and all-rounders in the last 7 days", "No spin bowlers or all-rounders in this squad."))) : null,
+    batters.length ? card("Batting, last 7 days", batSub, battingChart) : null);
 }
 const fixTz = (s) => (s.endsWith("Z") || /[+-]\d\d:\d\d$/.test(s) ? s : s + "Z");
 
@@ -662,50 +693,344 @@ async function fitnessTab() {
   const main = $("#main");
   if (!S.season) return main.replaceChildren(h("h1", {}, "Fitness"), h("div", { class: "card" }, "Create a season first (Admin tab → + Season)."));
   const phase = S.phase || "baseline";
-  const rows = await api(`/squads/${S.squad.id}/fitness?season_id=${S.season.id}&phase=${phase}`);
-  const cols = [["name", "Name"], ["bowling_arm", "Arm"], ["bodyweight_kg", "kg"], ["height_cm", "cm"], ["cmj_cm", "CMJ"], ["squat_jump_cm", "SJ"], ["sprint_5m_s", "5m"], ["sprint_10m_s", "10m"], ["sprint_20m_s", "20m"],
-    ["yoyo_level", "Yo-Yo"], ["yoyo_distance_m", "Yo-Yo m"], ["prone_plank_s", "Plank"], ["side_plank_front_s", "Side F"], ["side_plank_back_s", "Side B"], ["calf_raises_front_leg", "Calf F"], ["calf_raises_back_leg", "Calf B"]];
-  main.replaceChildren(h("div", { class: "bar" }, h("h1", {}, "Fitness report"), h("div", { class: "row" }, seasonPicker(fitnessTab),
-    h("select", { "aria-label": "Test phase", onchange: (e) => { S.phase = e.target.value; fitnessTab(); } }, Object.entries(PHASE).map(([k, v]) => h("option", { value: k, selected: k === phase }, v))))),
-    h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, cols.map(([, l]) => h("th", {}, l)))),
-      h("tbody", {}, rows.map((r) => h("tr", { class: "click", tabindex: 0, onclick: () => fitnessForm({ id: r.player_id, full_name: r.name, role: r.role }, phase),
-        onkeydown: (e) => e.key === "Enter" && fitnessForm({ id: r.player_id, full_name: r.name, role: r.role }, phase) }, cols.map(([k]) => h("td", {}, fmt(r[k])))))))),
-    h("p", { class: "sub" }, "Select a row to enter results. Empty = not tested."),
-    can("coach", "sc_coach", "admin") ? benchmarkCard() : null);
+  main.replaceChildren(h("div", { class: "empty loading" }, "Loading the test report…"));
+  const [d, cats, brand] = await Promise.all([
+    api(`/squads/${S.squad.id}/seasons/${S.season.id}/test-results?window=${phase}`).catch((x) => ({ error: x.message })),
+    api(`/squads/${S.squad.id}/seasons/${S.season.id}/test-categories?window=${phase}`).catch(() => null), branding()]);
+  const controls = h("div", { class: "row no-print" }, seasonPicker(fitnessTab),
+    h("select", { "aria-label": "Test window", onchange: (e) => { S.phase = e.target.value; fitnessTab(); } },
+      Object.entries(PHASE).map(([k, v]) => h("option", { value: k, selected: k === phase }, v))),
+    d.error ? null : h("button", { class: "small", onclick: () => window.print() }, "Print / save PDF"),
+    d.error ? null : h("button", { class: "small ghost", onclick: () => downloadFile(`/squads/${S.squad.id}/seasons/${S.season.id}/physical-report.xlsx?window=${phase}`,
+      "physical-report.xlsx").catch((x) => toast(x.message)) }, "Download Excel"));
+  if (d.error) return main.replaceChildren(h("div", { class: "bar" }, h("h1", {}, "Fitness report"), controls),
+    h("div", { class: "card" }, "The physical test report is for the coaches and S&C staff. ", h("span", { class: "sub" }, d.error)));
+  main.replaceChildren(fitnessReport(d, cats, brand, phase, controls));
 }
 
-function benchmarkCard() {
-  const fld = h("select", {}, FIELDS.filter(([k]) => !["bodyweight_kg", "height_cm", "yoyo_level"].includes(k)).map(([k, l]) => h("option", { value: k }, l)));
-  const val = h("input", { type: "number", step: "any", required: true });
-  const err = h("div", { class: "err", role: "alert" });
-  return h("form", { class: "card", onsubmit: async (e) => {
-    e.preventDefault(); err.textContent = "";
-    try { await api(`/squads/${S.squad.id}/fitness-benchmarks`, { method: "PUT", body: { field_name: fld.value, target_value: +val.value } }); toast("Benchmark saved"); val.value = ""; } catch (x) { err.textContent = x.message; }
-  } }, h("h3", {}, "Coach benchmark for this squad"), h("p", { class: "sub" }, "Your own provisional targets. No adult standards."),
-    h("div", { class: "grid" }, field("Test", fld), field("Target value", val)), err, h("button", { class: "small", type: "submit" }, "Save benchmark"));
+// Professional squad test report: header with the logo, key numbers, squad vs U15, one ranked chart per test, body composition,
+// past tests and the full results table. Prints cleanly (Print / save PDF).
+const AGE_CLS = { strong: "c-good", on_track: "c-s1", developing: "c-warning", below: "c-critical" };
+const AGE_TXT = { strong: "Strong for age", on_track: "On track", developing: "Developing", below: "Below reference" };
+
+function fitnessReport(d, cats, brand, phase, controls) {
+  const used = d.tests.filter((t) => d.players.some((r) => r.values[t.key] != null));
+  const tested = d.players.filter((r) => r.level);
+  const catBy = Object.fromEntries(((cats && cats.players) || []).map((c) => [c.player_id, c]));
+  const open = (r) => () => fitnessForm({ id: r.player_id, full_name: r.name, role: r.role }, phase);
+  const mean = (vals) => { const x = vals.filter((v) => v != null && !isNaN(v)); return x.length ? x.reduce((a, b) => a + b, 0) / x.length : null; };
+  const f1 = (v) => (v == null ? "–" : (+v).toFixed(1));
+  const mmss = (s) => `${Math.floor(s / 60)}.${String(Math.round(s % 60)).padStart(2, "0")}`;
+  const show = (t, v) => (v == null ? "–" : t.kind === "mmss" ? mmss(v) : t.kind === "count" ? String(Math.round(v)) : (+v).toFixed(2));
+  const better = (t, a, b) => (t.higher_is_better ? a > b : a < b);
+  const dates = [...new Set(tested.map((r) => r.test_date).filter(Boolean))].sort();
+  const levels = [...new Set(tested.map((r) => r.level_label))];
+  const short = (n) => { const p = n.split(" "); return p.length > 1 ? `${p[0]} ${p[p.length - 1][0]}.` : n; };
+
+  // ── header ──
+  const head = h("header", { class: "rep-head" },
+    h("div", { class: "rep-brand" }, brand.logo ? h("img", { src: brand.logo, alt: brand.name || "Sri Lanka Cricket", class: "rep-logo" }) : null,
+      h("div", {}, h("div", { class: "rep-org" }, "Sri Lanka Cricket · Strength and conditioning"), h("h1", {}, "Physical Test Report"),
+        h("div", { class: "rep-meta" }, [d.squad, d.season.name, d.window_label,
+          dates.length ? (dates.length === 1 ? `Tested ${fdate(dates[0])}` : `Tested ${fdate(dates[0])} to ${fdate(dates[dates.length - 1])}`) : "Not tested yet",
+          levels.length === 1 ? levels[0] : null].filter(Boolean).join("  ·  ")))),
+    controls);
+  if (!tested.length) {
+    return h("div", { class: "report" }, head, h("div", { class: "card" }, h("h2", {}, `No ${d.window_label.toLowerCase()} results yet`),
+      h("p", { class: "sub" }, "Import the test template on the Tests page, or select a player below to enter results."),
+      h("div", { class: "row" }, d.players.map((r) => h("button", { class: "small ghost", onclick: open(r) }, r.name)))),
+      pastTestsCard(d, used));
+  }
+
+  // ── key numbers ──
+  const ageVals = tested.flatMap((r) => Object.values(r.age).filter(Boolean));
+  const meets = ageVals.filter((b) => b === "on_track" || b === "strong").length;
+  const pts = tested.map((r) => catBy[r.player_id] && catBy[r.player_id].benchmark).filter(Boolean);
+  const pct = ageVals.length ? Math.round((meets / ageVals.length) * 100) : null;
+  const kpis = h("div", { class: "kpis" },
+    Charts.stat({ label: "Players tested", value: `${tested.length} / ${d.players.length}`, sub: `${used.length} tests · best of 3 trials` }),
+    Charts.stat({ label: `Results at or above ${d.age_group} expected`, value: pct == null ? "–" : `${pct}%`, sub: `${meets} of ${ageVals.length} results`,
+      tone: pct == null ? null : pct >= 60 ? "good" : pct >= 40 ? "warning" : "critical" }),
+    Charts.stat({ label: `Average ${d.age_group} points`, value: pts.length ? f1(mean(pts.map((b) => b.total))) : "–",
+      sub: pts.length ? `out of ${pts[0].max} · SLC benchmark` : "needs a full test set" }),
+    Charts.stat({ label: "Squad average", value: `${f1(mean(tested.map((r) => r.height_cm)))} cm`,
+      sub: `${f1(mean(tested.map((r) => r.weight_kg)))} kg · sum of 8 skinfolds ${f1(mean(tested.map((r) => r.skinfold_sum)))} mm` }));
+
+  // ── squad vs age reference ──
+  const vsRef = used.filter((t) => t.reference).map((t) => {
+    const have = tested.filter((r) => r.age[t.key]);
+    const ok = have.filter((r) => ["on_track", "strong"].includes(r.age[t.key])).length;
+    const p = have.length ? Math.round((ok / have.length) * 100) : 0;
+    const avg = mean(tested.map((r) => r.values[t.key]));
+    return { label: t.label, value: p, display: `${ok}/${have.length} · ${p}%`, cls: p >= 60 ? "c-good" : p >= 40 ? "c-warning" : "c-critical",
+      sub: `avg ${show(t, avg)} · ${d.age_group} expected ${t.reference.expected_display} ${t.unit}`,
+      tip: [t.label, `${ok} of ${have.length} players at or above ${d.age_group} expected`, `Squad average ${show(t, avg)} ${t.unit}`,
+        `Expected ${t.reference.expected_display} · strong ${t.reference.strong_display}`] };
+  });
+  const bandCount = [1, 2, 3, 4, 5].map((b) => tested.filter((r) => (catBy[r.player_id] || {}).band === b).length);
+  const bandCls = ["c-critical", "c-warning", "c-s1", "c-good", "c-q5"];
+  const bandNames = (cats && cats.band_names) || ["Band 1", "Band 2", "Band 3", "Band 4", "Band 5"];
+  const overview = h("div", { class: "dash-grid wide-left" },
+    card(`Squad against the ${d.age_group} reference`, `Share of players at or above the ${d.age_group} expected value, test by test.`,
+      Charts.hbars({ data: vsRef, max: 100, refs: [{ value: 50, label: "50%" }], ariaLabel: "Players at or above expected, by test" })),
+    card("Squad bands", "Each player's band from the full test set (Band 5 = best in the level group).",
+      bandCount.some(Boolean)
+        ? Charts.donut({ title: "Bands", parts: bandCount.map((n, i) => ({ label: `Band ${i + 1} · ${bandNames[i] || ""}`.replace(/ · $/, ""), value: n, cls: bandCls[i] })),
+          center: { value: String(bandCount.reduce((a, b) => a + b, 0)), label: "players" } })
+        : h("p", { class: "sub" }, `Bands need at least ${(cats && cats.min_cohort) || 4} players at the same level.`)));
+
+  // ── one ranked chart per test ──
+  const ageLegend = Charts.legend(Object.entries(AGE_TXT).map(([k, v]) => ({ cls: AGE_CLS[k], label: v })));
+  const testCards = used.map((t) => {
+    const rows = tested.filter((r) => r.values[t.key] != null).sort((a, b) => (better(t, a.values[t.key], b.values[t.key]) ? -1 : 1));
+    const avg = mean(rows.map((r) => r.values[t.key]));
+    const ref = t.reference;
+    const all = [...rows.map((r) => r.values[t.key]), avg, ref ? ref.expected : null].filter((v) => v != null);
+    const base = Math.max(0, Math.floor(Math.min(...all) * 0.85));                 // bars start near the lowest value so differences show
+    const best = rows[0];
+    const refs = [{ value: avg - base, label: `avg ${show(t, avg)}` }];
+    if (ref) refs.push({ value: ref.expected - base, label: `${d.age_group} ${ref.expected_display}` });
+    const top = Math.max(...all.map((v) => v - base));
+    if (refs.length === 2 && Math.abs(refs[0].value - refs[1].value) < top * 0.14) {     // labels would overlap: one label, both lines kept
+      const [lo, hi] = refs[0].value <= refs[1].value ? [refs[0], refs[1]] : [refs[1], refs[0]];
+      lo.label = `${lo.label} · ${hi.label}`; hi.label = "";
+    }
+    return card(`${t.label}`, `${t.unit} · ${t.higher_is_better ? "higher" : "lower"} is better · best ${best.name} ${best.results[t.key]}` +
+        (base ? ` · axis starts at ${show(t, base)}` : ""),
+      Charts.hbars({ ariaLabel: `${t.label} by player`, refs,
+        data: rows.map((r) => {
+          const ch = r.change && r.change.tests[t.key];
+          return { label: short(r.name), sub: r.squad_no != null ? `#${r.squad_no}` : null, value: r.values[t.key] - base,
+            display: r.results[t.key] + (ch && ch.state !== "same" ? (ch.state === "improved" ? " ▲" : " ▼") : ""),
+            cls: AGE_CLS[r.age[t.key]] || "c-s1", onClick: open(r),
+            tip: [r.name, `${r.results[t.key]} ${t.unit}`, r.age[t.key] ? `${AGE_TXT[r.age[t.key]]} for ${d.age_group}` : null,
+              ch ? `${ch.text} since ${r.change.label} (was ${ch.from})` : null] };
+        }) }));
+  });
+
+  // ── body composition ──
+  const sf = tested.filter((r) => r.skinfold_sum != null).sort((a, b) => a.skinfold_sum - b.skinfold_sum);
+  const sfAvg = mean(sf.map((r) => r.skinfold_sum));
+  const ht = tested.filter((r) => r.height_cm != null).sort((a, b) => b.height_cm - a.height_cm);
+  const htAvg = mean(ht.map((r) => r.height_cm));
+  const htBase = ht.length ? Math.floor(Math.min(...ht.map((r) => r.height_cm)) * 0.85) : 0;
+  const body = h("div", { class: "dash-grid two" },
+    card("Sum of 8 skinfolds", "mm · ISAK 8 sites · lower = leaner. Track each player's own trend rather than comparing players.",
+      Charts.hbars({ ariaLabel: "Sum of 8 skinfolds by player", refs: sfAvg ? [{ value: sfAvg, label: `avg ${f1(sfAvg)}` }] : [],
+        empty: "No skinfolds recorded yet.",
+        data: sf.map((r) => ({ label: short(r.name) + (r.copied.length ? " *" : ""), value: r.skinfold_sum, display: f1(r.skinfold_sum),
+          cls: r.copied.length ? "c-muted" : "c-s3", onClick: open(r), tip: [r.name, `${f1(r.skinfold_sum)} mm`, r.copied.join(". ") || null] })) }),
+      sf.some((r) => r.copied.length) ? h("p", { class: "hint warn" }, "* Grey bars were not measured: copied from a comparison player. Measure these players at the next test.") : null),
+    card("Height, weight and BMI", `cm · axis starts at ${htBase} cm. BMI is a rough guide only for growing players.`,
+      Charts.hbars({ ariaLabel: "Height by player", refs: htAvg ? [{ value: htAvg - htBase, label: `avg ${f1(htAvg)}` }] : [], empty: "No heights recorded yet.",
+        data: ht.map((r) => ({ label: short(r.name), sub: `${f1(r.weight_kg)} kg · BMI ${f1(r.bmi)}`, value: r.height_cm - htBase, display: `${f1(r.height_cm)} cm`,
+          cls: "c-s1", onClick: open(r), tip: [r.name, `${f1(r.height_cm)} cm`, `${f1(r.weight_kg)} kg`, `BMI ${f1(r.bmi)}`] })) })));
+
+  return h("div", { class: "report" }, head, kpis, overview,
+    h("h2", { class: "rep-section" }, "Results by test"), h("div", { class: "rep-legend" }, ageLegend, h("span", { class: "sub" }, "▲ better / ▼ worse than the player's previous test. Select a player to edit.")),
+    h("div", { class: "dash-grid two" }, testCards),
+    h("h2", { class: "rep-section" }, "Body composition"), body,
+    pastTestsCard(d, used),
+    h("h2", { class: "rep-section" }, "Full results"), resultsTable(d, used, tested, catBy, open, { mean, f1, show, dates, levels }),
+    h("footer", { class: "rep-foot" }, brand.logo ? h("img", { src: brand.logo, alt: "", class: "rep-foot-logo" }) : null,
+      h("div", {}, h("strong", {}, `Sri Lanka Cricket · ${d.squad}`), h("div", { class: "sub" },
+        `${d.age_group} physical test report · ${d.season.name} · ${d.window_label} · prepared ${fdate(new Date().toISOString().slice(0, 10))}. ` +
+        `Reference values: ${d.age_group} youth norms (published where available, otherwise SLC estimates). Best of 3 trials; times in mm.ss.`))));
 }
+
+// every test window on record for the squad, with the squad averages and the change from the window before
+function pastTestsCard(d, used) {
+  const hist = d.history || [];
+  if (!hist.length) return null;
+  const tests = used.length ? used : d.tests.filter((t) => hist.some((w) => w.means[t.key]));
+  const f1 = (v) => (v == null ? "–" : (+v).toFixed(1));
+  const trend = (t, w, i) => {
+    const prev = hist.slice(0, i).reverse().find((x) => x.means[t.key]);
+    if (!prev || !w.means[t.key]) return null;
+    const a = prev.means[t.key].value, b = w.means[t.key].value;
+    if (Math.abs(b - a) < Math.abs(a) * 0.005) return h("span", { class: "trend same" }, " =");
+    const good = t.higher_is_better ? b > a : b < a;
+    return h("span", { class: "trend " + (good ? "up" : "down") }, good ? " ▲" : " ▼");
+  };
+  return h("div", {}, h("h2", { class: "rep-section" }, "Past tests"),
+    card("Squad averages, every test on record", hist.length < 2
+      ? "This is the first test on record for the squad. The mid-season and end-of-season tests will appear here with the change for each test."
+      : "▲ the squad average improved / ▼ got worse since the test before.",
+      h("div", { class: "scroll" }, h("table", { class: "rep-table" },
+        h("thead", {}, h("tr", {}, [["Test"], ["Date"], ["Players"], ["Height", "cm"], ["Weight", "kg"], ...tests.map((t) => [t.label, t.unit]), ["Sum of 8 skinfolds", "mm"]]
+          .map(([l, un]) => h("th", {}, l, un ? h("span", { class: "unit" }, un) : null)))),
+        h("tbody", {}, hist.map((w, i) => h("tr", { class: w.current ? "current" : "" },
+          h("td", {}, h("strong", {}, `${w.window_label}`), h("span", { class: "sub" }, ` · ${w.season}`), w.current ? h("span", { class: "chip" }, " This report") : null),
+          h("td", {}, w.date ? fdate(w.date) : "–"), h("td", {}, w.tested), h("td", {}, f1(w.height_cm)), h("td", {}, f1(w.weight_kg)),
+          tests.map((t) => h("td", {}, w.means[t.key] ? w.means[t.key].display : "–", trend(t, w, i))),
+          h("td", {}, f1(w.skinfold_sum)))))))));
+}
+
+// the full table: best results (or all trials), age colour, change since the previous test, skinfold sites on request
+function resultsTable(d, used, tested, catBy, open, u) {
+  const host = h("div", { class: "card" });
+  let showTrials = S.fitTrials === true, showSites = S.fitSites === true;
+  const anySR = d.players.some((r) => r.sit_reach != null);
+  const anySf = d.players.some((r) => Object.values(r.skinfolds).some((v) => v != null));
+  const withLevel = u.levels.length > 1, withDate = u.dates.length > 1;
+  const trialsOf = (t) => showTrials && t.kind !== "mmss" && t.kind !== "count";
+  const draw = () => {
+    const th = (label, unit) => h("th", {}, label, unit ? h("span", { class: "unit" }, unit) : null);
+    const head = [th("No."), th("Player"), withLevel ? th("Level") : null, withDate ? th("Date") : null, th("Height", "cm"), th("Weight", "kg"), th("BMI"),
+      ...used.flatMap((t) => (trialsOf(t) ? [th(t.label, "trial 1"), th("", "trial 2"), th("", "trial 3"), th("Best", t.unit)] : [th(t.label, t.unit)])),
+      anySR ? th("Sit and reach", "cm") : null, ...(showSites ? d.sites.map((x) => th(x.label, "mm")) : []), th("Sum of 8 skinfolds", "mm"), th("Band"), th(`${d.age_group} points`)].filter(Boolean);
+    const cell = (r, t) => {
+      const ch = r.change && r.change.tests[t.key];
+      return h("td", { class: "res" }, r.age[t.key] ? h("span", { class: "dot " + AGE_CLS[r.age[t.key]], title: AGE_TXT[r.age[t.key]] }) : null,
+        h("strong", {}, r.results[t.key] ?? "–"),
+        ch && ch.state !== "same" ? h("div", { class: "trend " + (ch.state === "improved" ? "up" : "down"), title: `since ${r.change.label} (was ${ch.from})` }, ch.text) : null);
+    };
+    const avg = (t) => u.show(t, u.mean(tested.map((r) => r.values[t.key])));
+    const foot = (label, fn, extra) => h("tr", {}, h("td"), h("td", {}, h("strong", {}, label)), withLevel ? h("td") : null, withDate ? h("td") : null,
+      h("td", {}, extra[0]), h("td", {}, extra[1]), h("td", {}, extra[2]), used.flatMap((t) => (trialsOf(t) ? [h("td"), h("td"), h("td"), h("td", {}, fn(t))] : [h("td", {}, fn(t))])),
+      anySR ? h("td", {}, extra[3]) : null, showSites ? d.sites.map((x) => h("td", {}, extra[4] ? u.f1(u.mean(d.players.map((r) => r.skinfolds[x.key]))) : "")) : null,
+      h("td", {}, h("strong", {}, extra[5])), h("td"), h("td"));
+    host.replaceChildren(
+      h("div", { class: "bar no-print" }, h("p", { class: "sub" }, `${tested.length} of ${d.players.length} players tested. Best of 3 trials; times in mm.ss (8.25 = 8 min 25 s). ` +
+        "The dot shows the result against the age reference; the line under it is the change since the player's previous test."),
+        h("div", { class: "row rep-toggles" },
+          h("label", {}, h("input", { type: "checkbox", checked: showTrials, onchange: (e) => { showTrials = S.fitTrials = e.target.checked; draw(); } }), " Show all 3 trials"),
+          anySf ? h("label", {}, h("input", { type: "checkbox", checked: showSites, onchange: (e) => { showSites = S.fitSites = e.target.checked; draw(); } }), " Show the 8 skinfold sites") : null)),
+      h("div", { class: "scroll" }, h("table", { class: "skinfolds rep-table" }, h("thead", {}, h("tr", {}, head)),
+        h("tbody", {}, d.players.map((r, i) => {
+          const out = [], c = catBy[r.player_id];
+          if (r.standby && !(d.players[i - 1] || {}).standby) out.push(h("tr", { class: "group" }, h("td", { colspan: head.length }, "Stand-by players")));
+          out.push(h("tr", { class: "click", tabindex: 0, onclick: open(r), onkeydown: (e) => e.key === "Enter" && open(r)(), title: r.copied.join(". ") || null },
+            h("td", {}, r.squad_no ?? "–"), h("td", {}, r.name + (r.copied.length ? " *" : "")), withLevel ? h("td", {}, r.level_label || "Not tested") : null,
+            withDate ? h("td", {}, r.test_date ? fdate(r.test_date) : "–") : null,
+            h("td", {}, fmt(r.height_cm, 1)), h("td", {}, u.f1(r.weight_kg)), h("td", {}, u.f1(r.bmi)),
+            used.flatMap((t) => (trialsOf(t)
+              ? [...(r.trials[t.key] || [null, null, null]).map((v) => h("td", { class: "sub" }, v ?? "–")), cell(r, t)] : [cell(r, t)])),
+            anySR ? h("td", {}, fmt(r.sit_reach, 1)) : null,
+            showSites ? d.sites.map((x) => h("td", {}, u.f1(r.skinfolds[x.key]))) : null,
+            h("td", { class: r.third_needed ? "down" : "" }, h("strong", {}, u.f1(r.skinfold_sum))),
+            h("td", {}, c && c.band ? bandChip(c) : "–"), h("td", {}, c ? benchChip(c.benchmark) : "–")));
+          return out;
+        })),
+        h("tfoot", {},
+          foot("Squad average", avg, [u.f1(u.mean(tested.map((r) => r.height_cm))), u.f1(u.mean(tested.map((r) => r.weight_kg))), u.f1(u.mean(tested.map((r) => r.bmi))),
+            u.f1(u.mean(tested.map((r) => r.sit_reach))), true, u.f1(u.mean(tested.map((r) => r.skinfold_sum)))]),
+          foot(`${d.age_group} expected`, (t) => (t.reference ? t.reference.expected_display : "–"), ["", "", "", "", false, ""])))),
+      d.players.some((r) => r.copied.length) ? h("p", { class: "hint warn" }, "* Skinfolds not measured: copied from the comparison player the coach chose (hover the row). Replace them with real measurements when possible.") : null,
+      anySR ? null : h("p", { class: "sub" }, "Sit and reach: no results yet. The column appears once a result is entered."));
+  };
+  draw();
+  return host;
+}
+
+// SLC U15 SOP tests (Testing levels table), plus sit and reach and the ISAK 8-site skinfolds (recorded, not ranked)
+const SOP_TESTS = [["bronco", "Bronco (1,200 m)", "mm.ss", "provincial"], ["run_2km", "2 km run", "mm.ss", "super_provincial"],
+  ["broad_jump", "Standing broad jump", "cm", "super_provincial"], ["pushups", "Push-ups", "valid reps", "super_provincial"],
+  ["inverted_row", "Inverted row", "valid reps", "super_provincial"], ["sprint_20m", "20 m sprint", "s", "super_provincial"],
+  ["shuttle_5_10_5", "5-10-5 test", "s", "super_provincial"], ["plank", "Standard plank", "s", "super_provincial"]];
+const SKINFOLDS = [["sf_triceps", "Triceps"], ["sf_subscapular", "Subscapular"], ["sf_biceps", "Biceps"], ["sf_iliac_crest", "Iliac crest"],
+  ["sf_supraspinale", "Supraspinale"], ["sf_abdominal", "Abdominal"], ["sf_front_thigh", "Front thigh"], ["sf_medial_calf", "Medial calf"]];
+// ISAK: mean of two within 5%, else a third and the median; one measure counts on its own
+const skinfoldFinal = (vals) => {
+  const t = vals.filter((v) => v != null && !isNaN(v));
+  if (!t.length) return [null, false];
+  if (t.length === 1) return [t[0], false];
+  if (t.length >= 3) return [[...t].sort((a, b) => a - b)[1], false];
+  return [(t[0] + t[1]) / 2, Math.abs(t[0] - t[1]) / Math.min(t[0], t[1]) > 0.05];
+};
 
 async function fitnessForm(p, phase) {
   if (!S.season) return toast("Create a season first");
-  const existing = (await api(`/players/${p.id}/fitness?season_id=${S.season.id}`)).find((t) => t.phase === phase) || {};
-  const kpis = p.role ? await api(`/meta/role-kpis/${p.role}`) : [];
+  const canTest = can("sc_coach", "admin");
+  const [list, kpis, tst] = await Promise.all([api(`/players/${p.id}/fitness?season_id=${S.season.id}`), p.role ? api(`/meta/role-kpis/${p.role}`) : [],
+    api(`/players/${p.id}/testing?season_id=${S.season.id}&window=${phase}`).catch(() => null)]);
+  const existing = list.find((t) => t.phase === phase) || {};
+  const sess = tst ? tst.sessions.find((x) => x.window === phase) : null;
   const kinputs = kpis.map((m) => [m.field, h("input", { type: "number", step: m.unit === "1-5 rating" ? "1" : "any", min: m.lo, max: m.hi, inputMode: "decimal", value: (existing.role_specific || {})[m.field] ?? "" }), `${m.label} (${m.unit})`]);
   const ph = h("select", { onchange: () => fitnessForm(p, ph.value) }, Object.entries(PHASE).map(([k, v]) => h("option", { value: k, selected: k === phase }, v)));
-  const date = h("input", { type: "date", required: true, value: existing.test_date || new Date().toISOString().slice(0, 10) });
+  const date = h("input", { type: "date", required: true, value: (sess && sess.test_date) || existing.test_date || new Date().toISOString().slice(0, 10) });
   const inputs = FIELDS.map(([k, l, step]) => [k, h("input", { type: step ? "number" : "text", step, value: typeof existing[k] === "number" ? +existing[k].toFixed(3) : existing[k] ?? "", inputMode: "decimal" }), l]);
   const err = h("div", { class: "err", role: "alert" });
+
+  // ── SOP section: one row per test, three trials; the best valid trial counts
+  const level = h("select", { "aria-label": "Testing level" }, [["super_provincial", "Super Provincial"], ["provincial", "Provincial"]]
+    .map(([v, l]) => h("option", { value: v, selected: (sess ? sess.level : "super_provincial") === v }, l)));
+  const height = h("input", { type: "number", step: "0.1", min: 120, max: 200, value: sess && sess.height_cm != null ? sess.height_cm : "" });
+  const weight = h("input", { type: "number", step: "0.1", min: 25, max: 120, value: sess && sess.weight_kg != null ? sess.weight_kg : "" });
+  const trialRow = (key, label, unit, shown, extra) => {
+    const els = [0, 1, 2].map((i) => h("input", { type: "text", inputMode: "decimal", size: 6, "aria-label": `${label} trial ${i + 1}`, value: shown[i] ?? "" }));
+    els.forEach((el) => (el.dataset.initial = el.value));
+    return { key, els, tr: h("tr", { "data-level": extra || "" }, h("td", {}, label, h("span", { class: "sub" }, ` (${unit})`)), els.map((el) => h("td", {}, el))) };
+  };
+  const sopRows = SOP_TESTS.map(([k, l, u, lv]) => trialRow(k, l, u, sess && sess.results[k] ? sess.results[k].trials : [], lv));
+  const showLevel = () => sopRows.forEach((r) => (r.tr.hidden = r.tr.dataset.level !== level.value));
+  level.addEventListener("change", showLevel); showLevel();
+  const ex = sess ? sess.extras : null;
+  const srShown = ex && ex.sit_reach ? (ex.sit_reach.trials.some((v) => v != null) ? ex.sit_reach.trials : [ex.sit_reach.final]) : [];
+  const srRow = trialRow("sit_reach", "Sit and reach", "cm", srShown.map((v) => (v == null ? "" : String(v))));
+  const sfTotal = h("strong"), sfNote = h("span", { class: "sub" });
+  const sfRows = SKINFOLDS.map(([k, l]) => {
+    const site = ex ? ex.skinfolds.find((x) => x.key === k) : null;
+    const shown = site ? (site.trials.some((v) => v != null) ? site.trials : [site.final]) : [];
+    const r = trialRow(k, l, "mm", shown.map((v) => (v == null ? "" : String(v))));
+    r.final = h("td", { class: "num" }); r.tr.append(r.final, h("td", { class: "sub" }, site && site.note ? site.note : ""));
+    return r;
+  });
+  const recalc = () => {
+    let sum = 0, all = true, third = 0;
+    for (const r of sfRows) {
+      const [f, need] = skinfoldFinal(r.els.map((el) => (el.value.trim() === "" ? null : +el.value)));
+      r.final.textContent = f == null ? "–" : f.toFixed(1) + (need ? " · take a 3rd" : "");
+      r.final.className = need ? "num down" : "num";
+      if (f == null) all = false; else sum += f;
+      if (need) third++;
+    }
+    sfTotal.textContent = all ? sum.toFixed(1) + " mm" : "–";
+    sfNote.textContent = (all ? "" : " (needs all 8 sites)") + (third ? ` · 3rd measure needed at ${third} site(s)` : "");
+  };
+  sfRows.forEach((r) => r.els.forEach((el) => el.addEventListener("input", recalc))); recalc();
+  const trialTable = (rows, cols) => h("div", { class: "scroll" }, h("table", { class: "trials" }, h("thead", {}, h("tr", {}, cols.map((c) => h("th", {}, c)))),
+    h("tbody", {}, rows.map((r) => r.tr))));
+  const sopSection = canTest ? h("div", {},
+    h("h2", {}, "SLC U15 physical tests (SOP)"),
+    h("p", { class: "sub" }, "3 trials; the best valid trial is the result. Times in minutes as mm.ss (8.25 = 8 min 25 s). Leave a trial blank if not done: nothing is estimated."),
+    h("div", { class: "grid" }, field("Testing level", level), field("Height (cm)", height), field("Body weight (kg)", weight)),
+    trialTable(sopRows, ["Test", "Trial 1", "Trial 2", "Trial 3"]),
+    h("h2", {}, "Sit and reach"),
+    h("p", { class: "sub" }, "Hamstring and lower-back flexibility. cm with 0 at the toes (past the toes +, short of them −). Best of 3. Not ranked."),
+    trialTable([srRow], ["Test", "Trial 1", "Trial 2", "Trial 3"]),
+    h("h2", {}, "Skinfolds (mm, right side)"),
+    h("p", { class: "sub" }, "ISAK 8 sites. Two measures per site; if they differ by more than 5% take a third. Final = mean of two, or median of three."),
+    trialTable(sfRows, ["Site", "T1", "T2", "T3", "Final", ""]),
+    h("p", {}, "Total of 8 skinfolds: ", sfTotal, sfNote)) : null;
+
+  const sopBody = () => {
+    const results = {};
+    for (const r of [...sopRows.filter((x) => !x.tr.hidden), srRow, ...sfRows])
+      if (r.els.some((el) => el.value !== el.dataset.initial)) results[r.key] = r.els.map((el) => el.value.trim() || null);
+    const body = { level: level.value, test_date: date.value, results };
+    if (height.value !== "") body.height_cm = +height.value;
+    if (weight.value !== "") body.weight_kg = +weight.value;
+    return body;
+  };
   $("#main").replaceChildren(h("form", { class: "card", onsubmit: async (e) => {
     e.preventDefault(); err.textContent = "";
-    const body = { test_date: date.value };
-    for (const [k, el] of inputs) if (el.value !== "") body[k] = el.type === "number" ? +el.value : el.value; else if (existing[k] != null) body[k] = null;
-    const rs = {};
-    for (const [k, el] of kinputs) if (el.value !== "") rs[k] = +el.value; else if ((existing.role_specific || {})[k] != null) rs[k] = null;
-    if (Object.keys(rs).length) body.role_specific = rs;
-    try { await api(`/players/${p.id}/fitness/${S.season.id}/${ph.value}`, { method: "PUT", body }); toast("Results saved"); S.phase = ph.value; S.pid = p.id; go(S.tab === "fitness" ? "fitness" : "players"); }
-    catch (x) { err.textContent = x.message; }
+    try {
+      if (canTest) await api(`/players/${p.id}/tests/${S.season.id}/${ph.value}`, { method: "PUT", body: sopBody() });
+      const body = { test_date: date.value };
+      let any = !!existing.id;
+      for (const [k, el] of inputs) if (el.value !== "") { body[k] = el.type === "number" ? +el.value : el.value; any = true; } else if (existing[k] != null) body[k] = null;
+      const rs = {};
+      for (const [k, el] of kinputs) if (el.value !== "") { rs[k] = +el.value; any = true; } else if ((existing.role_specific || {})[k] != null) rs[k] = null;
+      if (Object.keys(rs).length) body.role_specific = rs;
+      if (any || !canTest) await api(`/players/${p.id}/fitness/${S.season.id}/${ph.value}`, { method: "PUT", body });
+      toast("Results saved"); S.phase = ph.value; S.pid = p.id; go(S.tab === "fitness" ? "fitness" : "players");
+    } catch (x) { err.textContent = x.message; }
   } }, h("h1", {}, "Fitness results – " + p.full_name), h("div", { class: "grid" }, field("Season", h("input", { value: S.season.name, disabled: true })), field("Test phase", ph), field("Test date", date)),
-    h("div", { class: "grid" }, inputs.map(([, el, l]) => field(l, el))),
-    kinputs.length ? [h("h2", {}, "Role-specific measures"), h("div", { class: "grid" }, kinputs.map(([, el, l]) => field(l, el)))] : null, err,
+    sopSection,
+    canTest ? null : h("div", { class: "grid" }, inputs.map(([, el, l]) => field(l, el))),
+    kinputs.length ? h("details", { open: !canTest }, h("summary", {}, "Role-specific measures"),
+      h("div", { class: "grid" }, kinputs.map(([, el, l]) => field(l, el)))) : null, err,
     h("div", { class: "row" }, h("button", { type: "submit" }, "Save results"), h("button", { type: "button", class: "ghost", onclick: () => go(S.tab) }, "Cancel"))));
 }
 
@@ -1098,6 +1423,7 @@ async function workloadTab() {
   $("#main").replaceChildren(h("h1", {}, "Workload"),
     h("p", { class: "sub" }, "Alerts are prompts for the coach and physio, not a diagnosis. Fast-bowler limits are provisional."),
     h("div", { class: "card" }, h("h2", {}, "Open alerts"), alertList(alerts, ack)),
+    squadWeekCard(),
     can("coach", "sc_coach", "admin") ? earlierCard() : null,
     h("div", { class: "card" }, h("h2", {}, "Squad overview"), h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {},
       ["Player", "Role", "Availability", "7-day load", "Load ratio", "Overs (7 d)", "Bowling days", "Status"].map((c) => h("th", {}, c)))),
@@ -1164,6 +1490,70 @@ function earlierCard() {
   return host;
 }
 
+// ───────────── the week (McGawley workshop): Mon-Sun loads, monotony, strain, change, ACWR, TRIMP, external load ─────────────
+const fmtN = (v, d = 0) => (v == null ? "–" : Number(v).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d }));
+async function playerWeek(p, host, monday, coach) {
+  const w = await api(`/players/${p.id}/workload/week?week_start=${monday}`);
+  const pick = h("input", { type: "date", value: monday, onchange: (e) => playerWeek(p, host, mondayOf(e.target.value), coach) });
+  const rows = w.days.flatMap((d) => (d.sessions.length ? d.sessions : [null]).map((x, i) => h("tr", {},
+    h("td", {}, i === 0 ? d.day : ""), h("td", {}, i === 0 ? fdate(d.date) : ""), h("td", {}, x ? (x.attended === false ? "Absent" : cap(x.type.replace("_", " "))) : "Rest"),
+    h("td", {}, x ? x.minutes ?? "–" : 0), h("td", {}, x ? x.rpe ?? x.intensity ?? "–" : 0), h("td", {}, h("strong", {}, x ? fmtN(x.load) : 0)),
+    h("td", {}, x ? fmtN(x.edwards) : ""), h("td", {}, x ? fmtN(x.banister) : ""), h("td", {}, x ? fmtN(x.hit, 1) : ""), h("td", {}, x ? fmtN(x.sprint_m) : ""),
+    h("td", {}, x ? fmtN(x.volume_load_kg) : ""), h("td", {}, x ? fmtN(x.foot_contacts) : ""))));
+  const hrBox = coach && can("coach", "sc_coach", "admin") ? (() => {
+    const mx = h("input", { type: "number", min: 150, max: 230, value: w.player.hr_max ?? "", class: "tiny", "aria-label": "Max heart rate" });
+    const rs = h("input", { type: "number", min: 30, max: 110, value: w.player.hr_rest ?? "", class: "tiny", "aria-label": "Resting heart rate" });
+    return h("div", { class: "row" }, h("span", { class: "sub" }, "Heart rate for TRIMP:"), "max", mx, "resting", rs,
+      h("button", { class: "small ghost", onclick: async () => { try { await api(`/players/${p.id}/heart-rate`, { method: "PUT",
+        body: { hr_max: mx.value ? Number(mx.value) : null, hr_rest: rs.value ? Number(rs.value) : null } }); toast("Heart rate saved"); playerWeek(p, host, monday, coach); }
+        catch (x) { toast(x.message); } } }, "Save"),
+      w.player.hr_max_estimated ? h("span", { class: "sub" }, `(using ${w.player.hr_max_used} bpm, estimated 208 − 0.7 × age)`) : null);
+  })() : null;
+  host.replaceChildren(h("div", { class: "bar" }, h("h3", {}, `This week: ${fdate(w.monday)} – ${fdate(w.sunday)}`), pick),
+    h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Day", "Date", "Session", "Minutes", "RPE", "Load (AU)", "Edwards TRIMP",
+      "Banister TRIMP", "Min ≥90% HRmax", "Sprint m", "Volume load kg", "Foot contacts"].map((c) => h("th", {}, c)))), h("tbody", {}, rows))),
+    h("div", { class: "kpis compact" },
+      Charts.stat({ label: "Weekly load", value: fmtN(w.total), sub: `mean ${fmtN(w.mean_daily)} · SD ${fmtN(w.sd_daily)} AU` }),
+      Charts.stat({ label: "Monotony", value: fmtN(w.monotony, 2), sub: `strain ${fmtN(w.strain)} AU`, tone: w.monotony > 2 ? "warning" : null }),
+      Charts.stat({ label: "Vs last week", value: w.change_pct == null ? "–" : (w.change_pct > 0 ? "+" : "") + fmtN(w.change_pct, 0) + "%",
+        sub: `last week ${fmtN(w.previous_week)} AU · keep under ~10%`, tone: w.change_pct > 10 ? "warning" : null }),
+      Charts.stat({ label: "Acute:chronic", value: fmtN(w.acwr, 2), sub: w.acwr_band, tone: w.acwr > 1.5 ? "critical" : null }),
+      Charts.stat({ label: "Weekly load %", value: w.load_pct == null ? "–" : w.load_pct + "%", sub: `of the heaviest week (${fmtN(w.heaviest_week)} AU)` })),
+    w.flags.length ? h("div", { class: "card inner" }, h("strong", {}, "Flags (a conversation, not a diagnosis)"), h("ul", {}, w.flags.map((f) => h("li", {}, f)))) : null,
+    hrBox,
+    h("p", { class: "sub" }, "Load = RPE (0-10) × minutes. Monotony = mean ÷ SD of the daily load (rest days 0); strain = weekly load × monotony. " +
+      "Acute:chronic = this week ÷ the 4-week average (a flag only)." + (w.sdec != null ? ` Repeated sprints: performance decrement ${fmtN(w.sdec, 1)}%.` : "")));
+}
+
+function squadWeekCard() {
+  const host = h("div", { class: "card" });
+  const pick = h("input", { type: "date", value: mondayOf(todayStr()) });
+  const body = h("div");
+  const load = async () => {
+    const m = mondayOf(pick.value);
+    const r = await api(`/squads/${S.squad.id}/workload/week?week_start=${m}`);
+    body.replaceChildren(h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Player", "Sessions", "Weekly load", "Mean", "SD", "Monotony",
+      "Strain", "Vs last wk", "ACWR", "Load % (measured)", "Load % (planned)", "Edwards", "Banister", "Min ≥90%", "Sprint m", "Vol. load kg", "Contacts", "Sdec %", "Flags"].map((c) => h("th", {}, c)))),
+      h("tbody", {}, r.players.map((x) => h("tr", { class: "click", onclick: () => { S.pid = x.player_id; S.from = S.tab; go("players"); } },
+        h("td", {}, x.name), h("td", {}, x.sessions), h("td", {}, h("strong", {}, fmtN(x.total))), h("td", {}, fmtN(x.mean_daily)), h("td", {}, fmtN(x.sd_daily)),
+        h("td", { class: x.monotony > 2 ? "down" : "" }, fmtN(x.monotony, 2)), h("td", {}, fmtN(x.strain)),
+        h("td", { class: x.change_pct > 10 ? "down" : "" }, x.change_pct == null ? "–" : (x.change_pct > 0 ? "+" : "") + fmtN(x.change_pct) + "%"),
+        h("td", { class: x.acwr > 1.5 ? "down" : "", title: x.acwr_band }, fmtN(x.acwr, 2)), h("td", {}, x.load_pct == null ? "–" : x.load_pct + "%"),
+        h("td", {}, r.planned_pct == null ? "–" : r.planned_pct + "%"), h("td", {}, fmtN(x.edwards_trimp)), h("td", {}, fmtN(x.banister_trimp)),
+        h("td", {}, fmtN(x.hit_minutes, 1)), h("td", {}, fmtN(x.sprint_m)), h("td", {}, fmtN(x.volume_load_kg)), h("td", {}, fmtN(x.foot_contacts)),
+        h("td", {}, fmtN(x.sdec, 1)), h("td", { class: "sub" }, x.flags.length ? "⚑ " + x.flags.length : "–")))))));
+  };
+  pick.onchange = () => load().catch((x) => body.replaceChildren(h("p", { class: "err" }, x.message)));
+  host.append(h("div", { class: "bar" }, h("h2", {}, "Weekly workload report"), h("div", { class: "row" }, pick,
+      h("button", { class: "small", onclick: () => downloadFile(`/squads/${S.squad.id}/workload/report.xlsx?week_start=${mondayOf(pick.value)}`, "Workload-report.xlsx")
+        .catch((x) => toast(x.message)) }, "Download report (Excel)"))),
+    h("p", { class: "sub" }, "Monday to Sunday. Load = RPE × minutes; monotony, strain, change on last week (flag above 10%), acute:chronic (flag above 1.5), " +
+      "weekly load % measured against the annual plan's planned %, TRIMP and external load. The Excel has each player's week, the 8-week trend, the test change, the formulas and the process."),
+    body);
+  load().catch((x) => body.replaceChildren(h("p", { class: "err" }, x.message)));
+  return host;
+}
+
 function weekBars(weeks, chronic) {
   const n = weeks.length;
   return Charts.columns({ ariaLabel: "Weekly load, oldest to newest",
@@ -1199,6 +1589,9 @@ async function workloadCard(p, host) {
     host.append(h("h3", {}, "Next week (guidance)"), h("div", { class: "card inner" }, h("p", {}, h("strong", {}, cap(g.action.replace("_", " ")) + (g.next_week_load ? `: about ${g.next_week_load[0]} to ${g.next_week_load[1]} load units` : "")),
       sum.season_phase ? h("span", { class: "sub" }, " · " + PHASE_NAME[sum.season_phase] + " phase") : null), h("p", {}, g.reason), h("p", { class: "sub" }, g.note)));
   }
+  const weekHost = h("div");
+  host.append(weekHost);
+  playerWeek(p, weekHost, mondayOf(todayStr()), coach).catch((x) => weekHost.replaceChildren(h("p", { class: "sub" }, x.message)));
   const logs = await api(`/players/${p.id}/workload`);
   if (logs.length) host.append(h("h3", {}, "Recent sessions"), h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Date", "Type", "Minutes", "RPE", "Load", "Overs"].map((c) => h("th", {}, c)))),
     h("tbody", {}, logs.slice(0, 10).map((l) => h("tr", {}, h("td", {}, fdate(l.log_date)), h("td", {}, l.attended ? cap(l.session_type.replace("_", " ")) : "Absent"), h("td", {}, l.duration_min ?? "–"),
@@ -1211,7 +1604,9 @@ function sessionForm(p, mode) {
   const f = { date: h("input", { type: "date", required: true, value: todayStr(), max: mode === "log" ? todayStr() : null }),
     type: h("select", {}, ["training", "match", "fitness_test", "camp", "review"].map((v) => h("option", { value: v }, cap(v.replace("_", " "))))),
     att: h("input", { type: "checkbox", checked: true }), dur: num(1, 480), rpe: num(1, 10), inten: num(1, 10),
-    overs: num(0, 50, "0.1"), spells: h("input", { placeholder: "e.g. 4, 3", inputMode: "decimal" }), faced: num(0, 600), keep: num(0, 480), throws: num(0, 300) };
+    overs: num(0, 50, "0.1"), spells: h("input", { placeholder: "e.g. 4, 3", inputMode: "decimal" }), faced: num(0, 600), keep: num(0, 480), throws: num(0, 300),
+    hr: num(40, 230), zones: [0, 1, 2, 3, 4].map(() => num(0, 480, "0.5")), hit: num(0, 480, "0.5"), sprint: num(0, 20000), vload: num(0, 200000, "0.5"),
+    contacts: num(0, 3000), stimes: h("input", { placeholder: "e.g. 7.1, 7.3, 7.4", inputMode: "decimal" }) };
   const err = h("div", { class: "err", role: "alert" }), result = h("div", {});
   const body = () => {
     const b = { log_date: f.date.value, session_type: f.type.value, attended: f.att.checked };
@@ -1220,6 +1615,9 @@ function sessionForm(p, mode) {
     set("duration_min", f.dur); set("rpe", f.rpe); set("session_intensity", f.inten); set("overs_bowled", f.overs);
     set("balls_faced", f.faced); set("keeping_minutes", f.keep); set("throws", f.throws);
     if (f.spells.value.trim()) b.spells = f.spells.value.split(",").map((x) => ({ overs: Number(x.trim()) }));
+    set("hr_avg", f.hr); set("hit_minutes", f.hit); set("sprint_m", f.sprint); set("volume_load_kg", f.vload); set("foot_contacts", f.contacts);
+    if (f.zones.some((z) => z.value !== "")) b.zone_minutes = f.zones.map((z) => Number(z.value || 0));
+    if (f.stimes.value.trim()) b.sprint_times = f.stimes.value.split(",").map((x) => Number(x.trim())).filter((x) => x > 0);
     return b;
   };
   const submit = async (ev) => {
@@ -1240,6 +1638,12 @@ function sessionForm(p, mode) {
     BOWLS.includes(p.role) ? [h("h2", {}, "Bowling"), h("div", { class: "grid" }, field("Overs (3.2 = 3 overs 2 balls)", f.overs), field("Spells in overs, comma separated", f.spells))] : null,
     BATS.includes(p.role) ? [h("h2", {}, "Batting"), h("div", { class: "grid" }, field("Balls faced", f.faced))] : null,
     p.role === "bat_wicketkeeper" ? [h("h2", {}, "Keeping"), h("div", { class: "grid" }, field("Keeping minutes", f.keep), field("Throws", f.throws))] : null,
+    h("details", {}, h("summary", {}, "Heart rate and external load (optional)"),
+      h("p", { class: "sub" }, "Internal load: average heart rate and minutes in each heart-rate zone (Edwards / Banister TRIMP). External load: " +
+        "minutes at 90% HRmax or more, sprint metres, volume load (sets × reps × %1RM × 1RM, kg), foot contacts. Repeated-sprint times give the performance decrement."),
+      h("div", { class: "grid" }, field("Average heart rate (bpm)", f.hr), field("Minutes at ≥ 90% HRmax", f.hit), field("Sprint metres", f.sprint)),
+      h("div", { class: "grid" }, ...["50-60%", "60-70%", "70-80%", "80-90%", "90-100%"].map((z, i) => field(`Minutes at ${z} HRmax`, f.zones[i]))),
+      h("div", { class: "grid" }, field("Volume load (kg)", f.vload), field("Foot contacts", f.contacts), field("Repeated-sprint times (s), comma separated", f.stimes))),
     err, result, h("div", { class: "row" }, h("button", { type: "submit" }, mode === "log" ? "Save session" : "Check"), h("button", { type: "button", class: "ghost", onclick: () => go("players") }, "Cancel"))));
 }
 
@@ -1721,7 +2125,8 @@ async function testingCard(p, host, window) {
   const head = h("div", { class: "bar" }, h("h2", {}, "Physical tests (SLC SOP)"), windowPicker(w, (v) => testingCard(p, host, v)));
   host.replaceChildren(head);
   if (!t.sessions.some((s) => s.window === w)) {
-    host.append(h("div", { class: "sub" }, "No results for this window yet. Import them in the Tests tab."));
+    host.append(h("div", { class: "sub" }, "No results for this window yet. Import them in the Tests tab, or enter them here."),
+      can("sc_coach", "admin") ? h("button", { class: "small", onclick: () => fitnessForm(p, w) }, "Enter test results") : null);
   } else {
     const sess = t.sessions.find((s) => s.window === w);
     host.append(h("div", { class: "row" }, bandChip(cat), h("span", { class: "chip" }, sess.level_label), readyChip(t.readiness),
@@ -1736,6 +2141,8 @@ async function testingCard(p, host, window) {
             tip: [a.label, a.percentile == null ? "Not ranked (missing result or small group)" : `Rank ${a.percentile} of 100`, ...a.tests.map((t) => `${t.label}: ${t.display ?? "–"}`)] })) })) : null,
       areaTable(cat),
       benchmarkCard(cat.benchmark),
+      bodyExtrasCard(sess.extras),
+      can("sc_coach", "admin") ? h("button", { class: "small ghost", onclick: () => fitnessForm(p, w) }, "Enter / edit test results") : null,
       cat.focus_areas.length ? h("p", {}, h("strong", {}, "Focus areas (below the middle): "), cat.focus_areas.map((f) => f.label).join(", ")) : (cat.band ? h("p", {}, "No area is below the middle.") : null),
       h("div", { class: "row" },
         h("button", { class: "small", onclick: () => planPanel(p, planHost, w) }, "Show individual plan"),
@@ -2173,6 +2580,75 @@ async function testWorkloadCard(host, window) {
     detail, h("details", {}, h("summary", {}, "How these are worked out"), d.notes.map((n) => h("p", { class: "sub" }, n))));
 }
 
+// sit and reach + the 8 skinfolds of one session (player page)
+function bodyExtrasCard(ex) {
+  if (!ex || (!ex.sit_reach && !ex.skinfolds.some((x) => x.final != null))) return null;
+  const sf = ex.skinfolds.filter((x) => x.final != null);
+  return h("div", { class: "card inner" }, h("h3", {}, "Body composition and flexibility"),
+    h("p", { class: "sub" }, "Recorded and tracked over the season; not ranked and not part of the band."),
+    h("div", { class: "row" },
+      Charts.stat({ label: "Sum of 8 skinfolds", value: ex.skinfold_sum == null ? "–" : ex.skinfold_sum.toFixed(1) + " mm",
+        sub: ex.skinfold_sum == null ? `${sf.length} of 8 sites measured` : ex.third_needed ? `3rd measure needed at ${ex.third_needed} site(s)` : "lower = leaner" }),
+      Charts.stat({ label: "Sit and reach", value: ex.sit_reach ? fmt(ex.sit_reach.final, 1) + " cm" : "–", sub: ex.sit_reach ? "best of 3" : "not tested" })),
+    sf.length ? h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Site", "T1", "T2", "T3", "Final (mm)"].map((c) => h("th", {}, c)))),
+      h("tbody", {}, ex.skinfolds.map((x) => h("tr", {}, h("td", {}, x.label), x.trials.map((v) => h("td", {}, fmt(v, 1))),
+        h("td", { class: x.third_needed ? "down" : "" }, x.final == null ? "–" : x.final.toFixed(1) + (x.third_needed ? " · take a 3rd" : ""))))))) : null,
+    ex.copied.length ? h("p", { class: "hint warn" }, ex.copied.join(". ") + ". Measure this player and enter the real values when possible.") : null);
+}
+
+// the squad's skinfold record and sit and reach (Tests page), in the layout of the skinfold sheet
+async function bodyTestsCard(host, window, canEdit) {
+  const d = await api(`/squads/${S.squad.id}/seasons/${S.season.id}/body-tests?window=${window}`);
+  const anyData = d.players.some((r) => r.skinfold_sum != null || r.sit_reach || r.skinfolds.some((x) => x.final != null));
+  const edit = (r) => () => canEdit ? fitnessForm({ id: r.player_id, full_name: r.name }, window) : (S.pid = r.player_id, S.from = S.tab, go("players"));
+  const withSum = d.players.filter((r) => r.skinfold_sum != null).sort((a, b) => a.skinfold_sum - b.skinfold_sum);
+  const chart = withSum.length ? Charts.hbars({ ariaLabel: "Sum of 8 skinfolds by player", format: (v) => Charts.num(v, 1),
+    data: withSum.map((r) => ({ label: r.name, value: r.skinfold_sum, display: r.skinfold_sum.toFixed(1) + (r.copied.length ? " *" : ""),
+      cls: r.copied.length ? "c-muted" : "c-s3", onClick: edit(r), tip: [r.name, `${r.skinfold_sum.toFixed(1)} mm (sum of 8)`, ...r.copied] })),
+    refs: d.squad_mean_sum ? [{ value: d.squad_mean_sum, label: "mean " + d.squad_mean_sum }] : [] }) : null;
+  host.replaceChildren(h("h2", {}, `Skinfolds and sit and reach · ${d.window_label}`),
+    h("p", { class: "sub" }, "Readings in mm, right side (ISAK 8 sites). Two measures per site, a third if they differ by more than 5%. " +
+      "Sit and reach in cm, best of 3. Recorded and tracked, not ranked." + (canEdit ? " Select a player to enter or edit." : "")),
+    !anyData ? h("p", { class: "sub" }, "Nothing recorded for this window yet. Add the columns in the test template, or select a player to enter them.") : null,
+    h("div", { class: "scroll" }, h("table", { class: "skinfolds" },
+      h("thead", {}, h("tr", {}, ["No.", "Player", "Weight (kg)", ...d.sites.map((x) => x.label), "Total of 8", "3rd measure needed (sites)", "Sit and reach (cm)"].map((c) => h("th", {}, c)))),
+      h("tbody", {}, d.players.map((r, i) => {
+        const prev = d.players[i - 1];
+        const rows = [];
+        if (r.standby && (!prev || !prev.standby)) rows.push(h("tr", {}, h("td", { colspan: 14, class: "sub" }, h("strong", {}, "Stand-by"))));
+        rows.push(h("tr", { class: "click", tabindex: 0, onclick: edit(r), onkeydown: (e) => e.key === "Enter" && edit(r)(), title: r.copied.join(". ") || null },
+          h("td", {}, r.squad_no ?? "–"), h("td", {}, r.name + (r.copied.length ? " *" : "")), h("td", {}, fmt(r.weight_kg, 1)),
+          r.skinfolds.map((x) => h("td", { class: x.third_needed ? "down" : "" }, x.final == null ? "" : x.final.toFixed(1))),
+          h("td", {}, h("strong", {}, r.skinfold_sum == null ? "–" : r.skinfold_sum.toFixed(1))), h("td", {}, r.third_needed),
+          h("td", {}, r.sit_reach ? fmt(r.sit_reach.final, 1) : "–")));
+        return rows;
+      })))),
+    d.players.some((r) => r.copied.length) ? h("p", { class: "hint warn" }, "* Not measured: values copied from the comparison player the coach chose (hover the row to see who). Measure and replace them when possible.") : null,
+    h("p", { class: "sub" }, `Squad mean: total of 8 ${d.squad_mean_sum ?? "–"} mm · sit and reach ${d.squad_mean_sit_reach ?? "–"} cm.`),
+    chart ? h("div", { class: "card inner" }, h("h3", {}, "Sum of 8 skinfolds (lower = leaner)"), chart) : null);
+}
+
+// SLC National U15 Physical Testing: standard operating procedures (summary of the approved SOP)
+const SOP_STEPS = [
+  ["Testing levels", "Provincial: height + body weight, Bronco. Super Provincial: height + body weight, 2 km run, standing broad jump, push-ups + inverted row, 20 m sprint, 5-10-5, standard plank.", []],
+  ["Before any test", "Confirm identity, age group, school/province, date, venue and assessor. Medical clearance first. Check surface, weather, equipment and run-out areas. Explain and demonstrate every test; same instructions, equipment, timing, order and scoring for all. Progressive warm-up. Stop if a player reports pain, dizziness, chest discomfort, unusual breathlessness or looks unwell.", []],
+  ["Height + body mass", "Stadiometer on a level surface, barefoot, heels down, head neutral, record cm. Calibrated scale, no shoes, light clothing, record kg. Repeat an inconsistent reading.", []],
+  ["Bronco (Provincial)", "Lines at 0, 20, 40 and 60 m. One cycle = 20 m out and back, 40 m out and back, 60 m out and back (240 m). Five cycles = 1,200 m. Record total time in minutes and seconds.", [["How to set up", "https://www.youtube.com/watch?v=R4cBuW3TrD0"], ["The Bronco test", "https://www.youtube.com/watch?v=EfuPPV_A9V4"]]],
+  ["2 km run (Super Provincial)", "Measured 2,000 m course (5 laps of a 400 m track, anti-clockwise). Start on the signal, stop when the player crosses the finish. Never compare with Bronco.", []],
+  ["Standing broad jump", "Non-slip level surface, take-off line, tape along the jump. Two-foot take-off and landing. Measure to the nearest landing mark (back of the nearest heel). Same arm-swing rule for all. Record every valid distance in cm and the best.", [["Video 1", "https://www.youtube.com/watch?v=EH4FuJF7_ok"], ["Video 2", "https://www.youtube.com/watch?v=GTjndpflm_I"]]],
+  ["Push-ups", "Hands slightly wider than shoulders, body straight head to heels, elbows about 45°, lower until the chest is just above the ground, push to full extension. Count only reps that meet every point. Record the set-up.", [["Video 1", "https://www.youtube.com/watch?v=WDIpL0pjun0"], ["Video 2", "https://www.youtube.com/watch?v=rSjzEE-eoVM"]]],
+  ["Inverted row", "Fixed bar, overhand grip just outside shoulder width, heels on the ground, body straight. Pull the chest to the bar, squeeze the shoulder blades, lower under control to straight arms. Same bar height, grip and foot position for all; record the set-up.", [["Video", "https://www.youtube.com/watch?v=EXTVaQudfj8"]]],
+  ["20 m sprint", "Straight measured 20 m lane with a safe run-out. Same start position and command. Sprint through the finish. Timing gates if available. Record each valid time in seconds; fastest counts.", [["Video 1", "https://www.youtube.com/watch?v=mCvGvsOW_ew"], ["Video 2", "https://www.youtube.com/watch?v=XF3jb4b0jWo"]]],
+  ["5-10-5 test", "Cones at 5 m left, middle (0 m), 5 m right. Start 30 cm from the middle, feet shoulder-width. Sprint 5 m right and touch the cone, 10 m left and touch, 5 m back through the middle. No touch = no try.", [["Video", "https://www.youtube.com/watch?v=XSc-g5o2qhY"]]],
+  ["Standard plank", "Forearm plank, elbows under shoulders, straight line head to heels, hips level. Start timing once aligned; stop when alignment is lost and not corrected after the agreed cue. Record seconds.", [["Video", "https://www.youtube.com/watch?v=XuprZeJa7G0"]]],
+  ["Sit and reach (added)", "Shoes off, legs straight, feet flat against the box. Reach forward slowly with both hands together and hold 2 s. Record cm (0 at the toes). Best of 3. Warm up first.", []],
+  ["Skinfolds (added)", "Trained measurer, calibrated caliper, right side, ISAK landmarks: triceps, subscapular, biceps, iliac crest, supraspinale, abdominal, front thigh, medial calf. Two measures per site, a third if they differ by more than 5%. Report the sum of 8.", []],
+  ["Results and reporting", "3 trials; the best counts. Record raw scores with units, test version, surface, timing method, trial number and notes, to two decimals (e.g. 8.25 min in the 2 km). Never estimate a missing result. Keep results confidential.", []]];
+const sopCard = () => h("details", { class: "card" }, h("summary", {}, h("strong", {}, "Testing procedures (SLC U15 SOP)")),
+  h("p", { class: "sub" }, "Summary of the Sri Lanka Cricket National Under-15 Physical Testing SOP, plus sit and reach and skinfolds."),
+  h("dl", { class: "sop" }, SOP_STEPS.map(([t, d, links]) => [h("dt", {}, t), h("dd", {}, d, links.length ? h("span", { class: "sub" }, " · ",
+    links.map(([l, u], i) => [i ? " · " : null, h("a", { href: u, target: "_blank", rel: "noopener noreferrer" }, l)])) : null)])));
+
 async function testingTab() {
   const main = $("#main");
   if (!S.season) return main.replaceChildren(h("h1", {}, "Tests"), h("div", { class: "card" }, "This squad has no season yet. Create one in Admin → Seasons."));
@@ -2236,6 +2712,10 @@ async function testingTab() {
         h("td", {}, r.focus_areas.join(", ") || "–"), h("td", {}, readyChip(r.readiness))))))));
   const twHost = h("div", { class: "card" });
   main.insertBefore(twHost, table.nextSibling);
+  const bodyHost = h("div", { class: "card" });
+  main.insertBefore(bodyHost, twHost);
+  bodyTestsCard(bodyHost, window, canImport).catch((x) => bodyHost.replaceChildren(h("div", { class: "err" }, x.message)));
+  main.append(sopCard());
   testWorkloadCard(twHost, window).catch((x) => twHost.replaceChildren(h("div", { class: "err" }, x.message)));
   const sp = await api(`/squads/${S.squad.id}/seasons/${S.season.id}/test-progress`);
   if (sp.windows_with_results.length >= 2) {

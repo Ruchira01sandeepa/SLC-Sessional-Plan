@@ -41,8 +41,8 @@ def test_scores_and_unknowns():
 def test_typo_ranges_depend_on_the_age_group():
     plank = BY_KEY["plank"]
     with pytest.raises(ValueError, match="outside the plausible range"):
-        parse_value(plank, 500, plausible("plank", "U15"))
-    assert parse_value(plank, 500, plausible("plank", "U19")) == 500.0
+        parse_value(plank, 800, plausible("plank", "U15"))          # 13:20 is a typing error
+    assert parse_value(plank, 605, plausible("plank", "U15")) == 605.0  # real Galle U15 holds reach 10:00 and 10:05
     assert plausible("sprint_20m", "U15")[0] > plausible("sprint_20m", "U19")[0]
 
 
