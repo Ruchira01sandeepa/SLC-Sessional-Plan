@@ -28,7 +28,7 @@ def _s(ws, r, c, v, *, bold=False, fill=None, white=False, wrap=False, fmt=None)
     return cell
 
 
-def write_summary_sheet(ws, summary: dict, plan: dict) -> None:
+def write_summary_sheet(ws, summary: dict, plan: dict, body: list[tuple[str, str]] | None = None) -> None:
     for col, w in zip("ABCDEFGH", (30, 22, 14, 14, 14, 14, 16, 18)):
         ws.column_dimensions[col].width = w
     _s(ws, 1, 1, f"Individual plan: {summary['player']}", bold=True)
@@ -54,6 +54,14 @@ def write_summary_sheet(ws, summary: dict, plan: dict) -> None:
             _s(ws, r, 7, t["percentile"])
             _s(ws, r, 8, a["percentile"] if k == 0 else None)
             r += 1
+    if body:                                                     # sit and reach, skinfolds, height, weight: recorded, not ranked
+        r += 1
+        _s(ws, r, 1, "Other measures (recorded, not ranked)", bold=True, fill=BLUE, white=True)
+        for k, v in body:
+            r += 1
+            _s(ws, r, 1, k, bold=True)
+            _s(ws, r, 2, v)
+        r += 1
     r += 1
     _s(ws, r, 1, "Focus areas (below the middle, weakest first)", bold=True)
     for f in plan["focus_areas"] or []:
@@ -233,11 +241,12 @@ def write_progress_sheet(ws, prog: dict) -> None:
     ws.freeze_panes = "B2"
 
 
-def build_player_workbook(summary: dict, plan: dict, g: dict, bowling: set[str] | None = None, prog: dict | None = None) -> bytes:
+def build_player_workbook(summary: dict, plan: dict, g: dict, bowling: set[str] | None = None, prog: dict | None = None,
+                          body: list[tuple[str, str]] | None = None) -> bytes:
     wb = Workbook()
     write_profile_sheet(wb.active, summary, plan)
     wb.active.title = "Player plan"
-    write_summary_sheet(wb.create_sheet("Test summary"), summary, plan)
+    write_summary_sheet(wb.create_sheet("Test summary"), summary, plan, body)
     write_focus_sheet(wb.create_sheet("Focus plan"), plan)
     write_weekly_sheet(wb.create_sheet("Weekly load"), plan)
     if prog and len(prog["windows"]) >= 2:

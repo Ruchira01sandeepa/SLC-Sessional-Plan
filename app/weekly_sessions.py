@@ -44,6 +44,13 @@ def _r(part, desc, time="", rep="", sets="", org="", rest="", head=False):
     return {"part": part, "desc": desc, "time": time, "rep": rep, "set": sets, "org": org, "rest": rest, "head": head}
 
 
+# a player whose sit and reach is short of the toes: 10 minutes after every practice (static holds when warm; youth guidelines)
+FLEX_FOCUS = [_r("MAIN PART", "Seated hamstring reach (both legs, knees straight)", "", "2 x 30 s", "1", "Individual", "15 s"),
+              _r("MAIN PART", "Lying hamstring stretch with a band, each leg", "", "2 x 30 s", "1", "Individual", "15 s"),
+              _r("MAIN PART", "Cat-camel and child's pose (lower back)", "", "8 + 30 s", "1", "Individual", ""),
+              _r("MAIN PART", "Hip flexor lunge stretch, each side", "", "30 s", "2", "Individual", "")]
+
+
 def block(part: str, name: str, minutes: int, items: list[dict]) -> list[dict]:
     """A timed block, as on the supplied sheet: a heading row 'NAME  N MIN', then its exercises. Empty -> nothing."""
     return [_r(part, name.upper() if name.islower() or name[0].islower() else name.upper(), f"{minutes} MIN", head=True)] \
@@ -290,6 +297,9 @@ def build_weeks(g: dict, *, roles: list[str], extra_off: dict[date, str] | None 
                 topic = "School practice and flexibility"
             kind, title = "school", f"{DAY_NAME[wd]} {day:%d %b %Y} - SCHOOL PRACTICE ({topic.split(' and ', 1)[1]})"
             unit = "Body weight and bands (homework); school practice as planned by the school coach"
+        if "flexibility" in weak and kind in ("trainer", "school"):   # sit and reach short of the toes: daily hamstring / lower-back work
+            at = next((i for i, r in enumerate(rows) if r["part"] == "FINAL PART"), len(rows))
+            rows = rows[:at] + block("MAIN PART", "Flexibility - FOCUS", 10, FLEX_FOCUS) + rows[at:]
         minutes = sum(int(r["time"].split()[0]) for r in rows if r.get("head") and r["time"])
         minutes += sum(15 for r in rows if r.get("head") and r["desc"] in {n for n, _ in LOWER.values()} | {n for n, _ in UPPER.values()}
                        | {"Crunches", "Homework - upper body (body weight)", "Flexibility and mobility"})

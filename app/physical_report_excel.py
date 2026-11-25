@@ -40,7 +40,7 @@ def _rank(v):
     return (round(v), RED if v < 50 else GREEN if v >= 70 else None)
 
 
-def build_physical_report(squad: str, d: dict) -> bytes:
+def build_physical_report(squad: str, d: dict, results: dict | None = None) -> bytes:
     wb = Workbook()
     ws = wb.active
     ws.title = "Heat map"
@@ -100,6 +100,9 @@ def build_physical_report(squad: str, d: dict) -> bytes:
     _table(ws, 1, ["Player", "Height (cm)", "Mass (kg)", "BMI", "Growth (cm/yr)", "Stage"],
            [[g["name"], g["height_cm"] or "-", g["weight_kg"] or "-", g["bmi"] or "-", g["velocity_cm_yr"] if g["velocity_cm_yr"] is not None else "-", g["stage_label"]]
             for g in d["growth"]], [26, 12, 12, 8, 14, 26])
+    if results is not None:                                      # every result of the window, sit and reach and skinfolds included
+        from .test_results_excel import write_squad_tests_sheet
+        write_squad_tests_sheet(wb.create_sheet("Test results"), results)
     buf = BytesIO()
     wb.save(buf)
     return buf.getvalue()

@@ -114,3 +114,13 @@ def test_fitness_report_has_references_past_tests_and_change(client, world):
     assert ch["state"] == "improved" and ch["from"] == "180.00" and bob["change"]["tests"]["sprint_20m"]["state"] == "same"
     base = client.get(f"/squads/{world['squad_a']}/seasons/{sid}/test-results?window=baseline", headers=H(world, "coach_a")).json()
     assert next(x for x in base["players"] if x["player_id"] == world["bob"])["change"] is None     # nothing earlier to compare with
+
+
+def test_fitness_report_history_has_the_sit_and_reach_average(client, world):
+    sid = make_season(client, world)
+    for who, v in (("bob", "-6"), ("ann", "4")):
+        assert client.put(f"/players/{world[who]}/tests/{sid}/baseline", headers=H(world, "sc_a"),
+                          json={"level": "super_provincial", "test_date": "2027-02-01", "results": {"sit_reach": [v]}}).status_code == 200
+    d = client.get(f"/squads/{world['squad_a']}/seasons/{sid}/test-results?window=baseline", headers=H(world, "coach_a")).json()
+    assert d["history"][0]["sit_reach"] == -1.0
+    assert sorted(r["sit_reach"] for r in d["players"] if r["sit_reach"] is not None) == [-6.0, 4.0]

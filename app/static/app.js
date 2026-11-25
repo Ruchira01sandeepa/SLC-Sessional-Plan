@@ -829,6 +829,7 @@ function fitnessReport(d, cats, brand, phase, controls) {
   return h("div", { class: "report" }, head, kpis, overview,
     h("h2", { class: "rep-section" }, "Results by test"), h("div", { class: "rep-legend" }, ageLegend, h("span", { class: "sub" }, "▲ better / ▼ worse than the player's previous test. Select a player to edit.")),
     h("div", { class: "dash-grid two" }, testCards),
+    sitReachSection(d, tested, open, short),
     h("h2", { class: "rep-section" }, "Body composition"), body,
     pastTestsCard(d, used),
     h("h2", { class: "rep-section" }, "Full results"), resultsTable(d, used, tested, catBy, open, { mean, f1, show, dates, levels }),
@@ -836,6 +837,40 @@ function fitnessReport(d, cats, brand, phase, controls) {
       h("div", {}, h("strong", {}, `Sri Lanka Cricket · ${d.squad}`), h("div", { class: "sub" },
         `${d.age_group} physical test report · ${d.season.name} · ${d.window_label} · prepared ${fdate(new Date().toISOString().slice(0, 10))}. ` +
         `Reference values: ${d.age_group} youth norms (published where available, otherwise SLC estimates). Best of 3 trials; times in mm.ss.`))));
+}
+
+// sit and reach: cm past (+) or short of (-) the toes. Recorded, not ranked; short of the toes = a flexibility focus in the plan.
+const srTxt = (v) => (v == null ? "–" : `${v > 0 ? "+" : ""}${(+v).toFixed(1)}`);
+const srCls = (v) => (v >= 10 ? "c-good" : v >= 0 ? "c-s1" : "c-warning");
+function sitReachSection(d, tested, open, short) {
+  const rows = tested.filter((r) => r.sit_reach != null).sort((a, b) => b.sit_reach - a.sit_reach);
+  const missing = d.players.filter((r) => r.sit_reach == null);
+  if (!rows.length) return h("div", {}, h("h2", { class: "rep-section" }, "Flexibility · sit and reach"),
+    h("div", { class: "card" }, h("p", { class: "sub" }, "No sit-and-reach results yet. Select a player to enter one (cm past + or short − of the toes).")));
+  const vals = rows.map((r) => r.sit_reach);
+  const base = Math.floor(Math.min(0, ...vals)) - 3;                   // bars start below the lowest score, so every player shows
+  const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+  const past = rows.filter((r) => r.sit_reach >= 0), shortOf = rows.filter((r) => r.sit_reach < 0), strong = rows.filter((r) => r.sit_reach >= 10);
+  const legend = Charts.legend([{ cls: "c-good", label: "10 cm or more past the toes" }, { cls: "c-s1", label: "Reaches the toes" },
+    { cls: "c-warning", label: "Short of the toes: flexibility focus" }]);
+  return h("div", {}, h("h2", { class: "rep-section" }, "Flexibility · sit and reach"),
+    h("div", { class: "dash-grid wide-left" },
+      card("Sit and reach", `cm from the toes: + past them, − short of them · axis starts at ${base} cm`,
+        Charts.hbars({ ariaLabel: "Sit and reach by player", refs: Math.abs(avg) < (Math.max(...vals) - base) * 0.14
+            ? [{ value: Math.min(0, avg) - base, label: `toes · avg ${srTxt(avg)}` }, { value: Math.max(0, avg) - base, label: "" }]
+            : [{ value: -base, label: "toes" }, { value: avg - base, label: `avg ${srTxt(avg)}` }],
+          data: rows.map((r) => ({ label: short(r.name), sub: r.squad_no != null ? `#${r.squad_no}` : null, value: r.sit_reach - base,
+            display: `${srTxt(r.sit_reach)} cm`, cls: srCls(r.sit_reach), onClick: open(r),
+            tip: [r.name, `${srTxt(r.sit_reach)} cm`, r.sit_reach < 0 ? "Short of the toes: flexibility is a focus in the plan" : "Reaches the toes"] })) }),
+        legend),
+      card("Squad flexibility", "Recorded, not ranked. Players short of the toes get daily hamstring and lower-back work in their plan.",
+        h("div", { class: "kpis" },
+          Charts.stat({ label: "Reach the toes", value: `${past.length} / ${rows.length}`, tone: past.length >= shortOf.length ? "good" : "warning" }),
+          Charts.stat({ label: "Squad average", value: `${srTxt(avg)} cm`, sub: avg >= 0 ? "past the toes" : "short of the toes" })),
+        shortOf.length ? h("div", {}, h("strong", {}, `Flexibility focus (${shortOf.length})`),
+          h("p", { class: "sub" }, shortOf.slice().sort((a, b) => a.sit_reach - b.sit_reach).map((r) => `${r.name} ${srTxt(r.sit_reach)}`).join(" · "))) : null,
+        strong.length ? h("div", {}, h("strong", {}, `Strength (${strong.length})`), h("p", { class: "sub" }, strong.map((r) => `${r.name} ${srTxt(r.sit_reach)}`).join(" · "))) : null,
+        missing.length ? h("p", { class: "hint warn" }, `Not tested yet: ${missing.map((r) => r.name).join(", ")}.`) : null)));
 }
 
 // every test window on record for the squad, with the squad averages and the change from the window before
@@ -857,13 +892,13 @@ function pastTestsCard(d, used) {
       ? "This is the first test on record for the squad. The mid-season and end-of-season tests will appear here with the change for each test."
       : "▲ the squad average improved / ▼ got worse since the test before.",
       h("div", { class: "scroll" }, h("table", { class: "rep-table" },
-        h("thead", {}, h("tr", {}, [["Test"], ["Date"], ["Players"], ["Height", "cm"], ["Weight", "kg"], ...tests.map((t) => [t.label, t.unit]), ["Sum of 8 skinfolds", "mm"]]
+        h("thead", {}, h("tr", {}, [["Test"], ["Date"], ["Players"], ["Height", "cm"], ["Weight", "kg"], ...tests.map((t) => [t.label, t.unit]), ["Sit and reach", "cm from toes"], ["Sum of 8 skinfolds", "mm"]]
           .map(([l, un]) => h("th", {}, l, un ? h("span", { class: "unit" }, un) : null)))),
         h("tbody", {}, hist.map((w, i) => h("tr", { class: w.current ? "current" : "" },
           h("td", {}, h("strong", {}, `${w.window_label}`), h("span", { class: "sub" }, ` · ${w.season}`), w.current ? h("span", { class: "chip" }, " This report") : null),
           h("td", {}, w.date ? fdate(w.date) : "–"), h("td", {}, w.tested), h("td", {}, f1(w.height_cm)), h("td", {}, f1(w.weight_kg)),
           tests.map((t) => h("td", {}, w.means[t.key] ? w.means[t.key].display : "–", trend(t, w, i))),
-          h("td", {}, f1(w.skinfold_sum)))))))));
+          h("td", {}, srTxt(w.sit_reach)), h("td", {}, f1(w.skinfold_sum)))))))));
 }
 
 // the full table: best results (or all trials), age colour, change since the previous test, skinfold sites on request
@@ -878,7 +913,7 @@ function resultsTable(d, used, tested, catBy, open, u) {
     const th = (label, unit) => h("th", {}, label, unit ? h("span", { class: "unit" }, unit) : null);
     const head = [th("No."), th("Player"), withLevel ? th("Level") : null, withDate ? th("Date") : null, th("Height", "cm"), th("Weight", "kg"), th("BMI"),
       ...used.flatMap((t) => (trialsOf(t) ? [th(t.label, "trial 1"), th("", "trial 2"), th("", "trial 3"), th("Best", t.unit)] : [th(t.label, t.unit)])),
-      anySR ? th("Sit and reach", "cm") : null, ...(showSites ? d.sites.map((x) => th(x.label, "mm")) : []), th("Sum of 8 skinfolds", "mm"), th("Band"), th(`${d.age_group} points`)].filter(Boolean);
+      anySR ? th("Sit and reach", "cm from toes") : null, ...(showSites ? d.sites.map((x) => th(x.label, "mm")) : []), th("Sum of 8 skinfolds", "mm"), th("Band"), th(`${d.age_group} points`)].filter(Boolean);
     const cell = (r, t) => {
       const ch = r.change && r.change.tests[t.key];
       return h("td", { class: "res" }, r.age[t.key] ? h("span", { class: "dot " + AGE_CLS[r.age[t.key]], title: AGE_TXT[r.age[t.key]] }) : null,
@@ -906,7 +941,7 @@ function resultsTable(d, used, tested, catBy, open, u) {
             h("td", {}, fmt(r.height_cm, 1)), h("td", {}, u.f1(r.weight_kg)), h("td", {}, u.f1(r.bmi)),
             used.flatMap((t) => (trialsOf(t)
               ? [...(r.trials[t.key] || [null, null, null]).map((v) => h("td", { class: "sub" }, v ?? "–")), cell(r, t)] : [cell(r, t)])),
-            anySR ? h("td", {}, fmt(r.sit_reach, 1)) : null,
+            anySR ? h("td", { class: r.sit_reach < 0 ? "down" : "" }, srTxt(r.sit_reach)) : null,
             showSites ? d.sites.map((x) => h("td", {}, u.f1(r.skinfolds[x.key]))) : null,
             h("td", { class: r.third_needed ? "down" : "" }, h("strong", {}, u.f1(r.skinfold_sum))),
             h("td", {}, c && c.band ? bandChip(c) : "–"), h("td", {}, c ? benchChip(c.benchmark) : "–")));
@@ -914,7 +949,7 @@ function resultsTable(d, used, tested, catBy, open, u) {
         })),
         h("tfoot", {},
           foot("Squad average", avg, [u.f1(u.mean(tested.map((r) => r.height_cm))), u.f1(u.mean(tested.map((r) => r.weight_kg))), u.f1(u.mean(tested.map((r) => r.bmi))),
-            u.f1(u.mean(tested.map((r) => r.sit_reach))), true, u.f1(u.mean(tested.map((r) => r.skinfold_sum)))]),
+            srTxt(u.mean(tested.map((r) => r.sit_reach))), true, u.f1(u.mean(tested.map((r) => r.skinfold_sum)))]),
           foot(`${d.age_group} expected`, (t) => (t.reference ? t.reference.expected_display : "–"), ["", "", "", "", false, ""])))),
       d.players.some((r) => r.copied.length) ? h("p", { class: "hint warn" }, "* Skinfolds not measured: copied from the comparison player the coach chose (hover the row). Replace them with real measurements when possible.") : null,
       anySR ? null : h("p", { class: "sub" }, "Sit and reach: no results yet. The column appears once a result is entered."));
@@ -1306,7 +1341,17 @@ function playerPlanButton(squadId, pid, cls = "small") {
   return h("span", { class: "row", style: "display:inline-flex;gap:8px" },
     h("button", { class: cls, onclick: () => (S.season ? downloadFile(`/squads/${squadId}/seasons/${S.season.id}/player-plans/${pid}.xlsx`, "Seasonal-plan.xlsx")
       : Promise.reject(new Error("Choose a season first"))).catch((x) => toast(x.message)) }, "Download seasonal plan (Excel)"),
+    playerPdfButton(squadId, pid, "annual", "Annual plan (PDF)"), playerPdfButton(squadId, pid, "weeks", "Week plans (PDF)"),
     playerPeriodizedButton(squadId, pid));
+}
+/** The player's own plan as a PDF: part = annual (52 weeks at a glance) | weeks (Monday to Friday sessions of every week). */
+function playerPdfButton(squadId, pid, part, label) {
+  return h("button", { class: "small ghost", title: part === "annual" ? "The Annual plan sheet (as in the Excel) and this player's test results"
+      : "Every week's Monday to Friday sessions: exercises, times, sets and reps",
+    onclick: (e) => { const b = e.target; if (!S.season) return toast("Choose a season first");
+      b.disabled = true; b.textContent = "Building PDF…";
+      downloadFile(`/squads/${squadId}/seasons/${S.season.id}/player-plans/${pid}.pdf?part=${part}`, `${part === "annual" ? "Annual-plan" : "Week-plans"}.pdf`)
+        .catch((x) => toast(x.message)).finally(() => { b.disabled = false; b.textContent = label; }); } }, label);
 }
 /** The player's own periodized annual plan (NSCA · Zatsiorsky), built from their test ranks. */
 function playerPeriodizedButton(squadId, pid) {
@@ -1316,6 +1361,13 @@ function playerPeriodizedButton(squadId, pid) {
       b.disabled = true; b.textContent = "Building…";
       downloadFile(`/squads/${squadId}/seasons/${S.season.id}/periodized-plan/${pid}.xlsx`, "Periodized-plan.xlsx").catch((x) => toast(x.message))
         .finally(() => { b.disabled = false; b.textContent = label; }); } }, label);
+}
+/** Every player's Annual plan (as the Excel sheet, from their own tests) and test results, in one PDF. */
+function allPlayersPdfButton(cls = "small") {
+  const label = "All players' annual plans + test results (PDF)";
+  return h("button", { class: cls, onclick: (e) => { const b = e.target; b.disabled = true; b.textContent = "Building every player's annual plan…";
+    downloadFile(`/squads/${S.squad.id}/seasons/${S.season.id}/player-plans.pdf`, "Annual-plans-all-players.pdf").catch((x) => toast(x.message))
+      .finally(() => { b.disabled = false; b.textContent = label; }); } }, label);
 }
 function allPlayersButton(cls = "small") {
   return h("button", { class: cls, onclick: (e) => { const b = e.target; b.disabled = true; b.textContent = "Preparing every player's plan…";
@@ -1377,7 +1429,7 @@ async function planTab(rolesParam) {
     h("div", { class: "row" },
       can("coach", "admin") ? h("button", { onclick: async () => { err.textContent = ""; try { const r = await api(`/squads/${S.squad.id}/seasons/${S.season.id}/seasonal-plan/save${rq}`, { method: "POST" }); toast(`Plan saved (${r.new} new, ${r.updated} updated)`); planTab(rolesParam); } catch (x) { err.textContent = x.message; } } }, (plan.saved ? "Re-save " : "Save ") + (plan.category ? "S&C rows" : "plan")) : null,
       h("button", { onclick: async () => { err.textContent = ""; try { await downloadPlan(rq, "seasonal-workbook.xlsx"); } catch (x) { err.textContent = x.message; } } }, "Download seasonal plan (Annual plan · Load · Components · Session)"),
-      allPlayersButton("ghost"),
+      allPlayersButton("ghost"), allPlayersPdfButton("ghost"),
       periodizedButton(err)),
     err,
     h("div", { class: "card" }, h("h3", {}, "Notes"), h("ul", {}, plan.notes.map((n) => h("li", {}, n)))),
@@ -2273,7 +2325,7 @@ function physSeason() {
       h("div", { class: "card" }, h("div", { class: "bar" }, h("h2", {}, "Periodized S&C season plan"),
           h("div", { class: "row" },
             h("button", { class: "small ghost", onclick: () => downloadPlan("", "seasonal-workbook.xlsx").catch((x) => toast(x.message)) }, "Squad seasonal plan (Excel)"),
-            allPlayersButton())),
+            allPlayersButton(), allPlayersPdfButton("ghost"))),
         h("p", { class: "sub" }, `${p.source}. Targets from ${p.based_on}; order of need: ${p.target_order.join(" → ")}.`),
         h("div", { class: "row legend" }, Object.entries({ accumulation: "Accumulation", transmutation: "Transmutation", realization: "Realization", competition: "Competition", transition: "Transition" })
           .map(([k, t]) => h("span", { class: "chip m-" + k }, t))),

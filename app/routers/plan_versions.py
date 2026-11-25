@@ -177,7 +177,9 @@ def individual_plan_xlsx(player_id: int, season_id: int | None = None, window: s
     win = plan.get("summary", {}).get("window") or window or "plan"
     name = re.sub(r"[^A-Za-z0-9]+", "-", f"individual-plan-{p.full_name}-{season.name}-{win}").strip("-") or "individual-plan"
     prog = build_progress(_player_windows(p.id, _windows_for(db, p.squad_id, season.id)))
-    return Response(build_player_workbook(plan["summary"], _dated(plan), g, _bowling(p), prog), media_type=XLSX,
+    from .testing import body_measures
+    body = body_measures(db, p.id, season.id, plan.get("summary", {}).get("window"))
+    return Response(build_player_workbook(plan["summary"], _dated(plan), g, _bowling(p), prog, body), media_type=XLSX,
                     headers={"Content-Disposition": f'attachment; filename="{name}.xlsx"'})
 
 

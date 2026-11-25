@@ -652,7 +652,7 @@ def _week_parts(wb, g: dict, roles, *, focus=None, annual_sheets=("Annual plan",
         link_annual_weeks(wb[name], g, links)
 
 
-def build_seasonal_workbook(g: dict, roles: list[str] | None = None, bowling: set[str] | None = None) -> bytes:
+def build_seasonal_workbook(g: dict, roles: list[str] | None = None, bowling: set[str] | None = None, tests: dict | None = None) -> bytes:
     """The seasonal plan as the supplied workbook: Annual plan | Load distribution | Component distribution | Session plan (choose a
     week: its Monday-Friday sessions) | Charts | Session data. g may be the squad grid or a player's (player_season_plan.personal_grid)."""
     wb = Workbook()
@@ -662,6 +662,10 @@ def build_seasonal_workbook(g: dict, roles: list[str] | None = None, bowling: se
     write_interval_load_sheet(wb.create_sheet("Load distribution"), g)
     write_classic_component_sheet(wb.create_sheet("Component distribution"))
     _week_parts(wb, g, roles)
+    if tests is not None:                                        # a player's plan: their test results (sit and reach included)
+        from .test_results_excel import write_player_tests_sheet
+        write_player_tests_sheet(wb.create_sheet("Test results"), tests, (g.get("player") or {}).get("name", ""))
+        wb.move_sheet("Test results", offset=wb.sheetnames.index("Charts") + 1 - wb.sheetnames.index("Test results"))   # next to Charts
     buf = BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -689,7 +693,7 @@ def load_sheet_name(annual_name: str, used: set[str]) -> str:
     return out
 
 
-def build_players_workbook(squad_grid: dict, players: list[tuple[str, dict]]) -> bytes:
+def build_players_workbook(squad_grid: dict, players: list[tuple[str, dict]], results: dict | None = None) -> bytes:
     """Every player's plan in ONE Excel: for each player their own Annual plan and their own Load distribution (built from their
     test ranks), then the shared Component distribution and Session plan. players: [(sheet name, personal grid)]."""
     wb = Workbook()
@@ -713,6 +717,10 @@ def build_players_workbook(squad_grid: dict, players: list[tuple[str, dict]]) ->
                         dose = " ".join(v for v in (x["time"], f"{x['rep']} reps" if x["rep"] else "", f"x {x['set']} sets" if x["set"] else "") if v)
                         focus.setdefault((wk["label"], i), []).append(f"{pg['player']['name']}: {x['desc'].replace(' - FOCUS', '')}" + (f" ({dose})" if dose else ""))
     _week_parts(wb, squad_grid, None, focus=focus, annual_sheets=tuple(n for n, _ in players) or ("Annual plan",))
+    if results is not None:                                      # every player's test results, sit and reach included
+        from .test_results_excel import write_squad_tests_sheet
+        write_squad_tests_sheet(wb.create_sheet("Test results"), results)
+        wb.move_sheet("Test results", offset=wb.sheetnames.index("Charts") + 1 - wb.sheetnames.index("Test results"))   # next to Charts
     buf = BytesIO()
     wb.save(buf)
     return buf.getvalue()

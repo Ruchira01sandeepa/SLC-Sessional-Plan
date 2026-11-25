@@ -329,6 +329,8 @@ def download_player_periodized_plan(squad_id: int, season_id: int, player_id: in
     plan, sessions = _periodized(db, user, squad_id, season_id, "testing.read")
     own = sessions.get(pl.id)
     shown = [(BY_KEY[k].label, f"best {display(BY_KEY[k], v)} {BY_KEY[k].unit}") for k, v in (_finals(own).items() if own else []) if k in BY_KEY]
+    from .testing import body_measures
+    shown += [(k, v) for k, v in body_measures(db, pl.id, season_id) if v != "-"]          # sit and reach, skinfolds, height, weight
     plan = personalize(plan, name=pl.full_name, role=ROLE_LABEL.get(pl.role.value, pl.role.value),
                        areas=_latest_areas(db, squad_id, season_id).get(pl.id, []), own_results=shown)
     audit(db, user, "periodized_plan.exported", "player", pl.id)
@@ -343,8 +345,35 @@ def _latest_areas(db: Session, squad_id: int, season_id: int) -> dict[int, list[
     wins = _windows_for(db, squad_id, season_id)
     if not wins:
         return {}
+    from ..player_season_plan import flexibility_area
+    from ..test_battery import SIT_REACH
     cats = wins[list(wins)[-1]][0]
-    return {pid: [{"area": a["area"], "label": a["label"], "percentile": a["percentile"]} for a in c["areas"]] for pid, c in cats.items()}
+    out = {pid: [{"area": a["area"], "label": a["label"], "percentile": a["percentile"]} for a in c["areas"]] for pid, c in cats.items()}
+    for _w, (_c, sessions) in wins.items():                       # flexibility: the latest sit and reach this season (not ranked)
+        for pid, s in sessions.items():
+            sr = next((x.final_value for x in s.results if x.test_key == SIT_REACH.key and x.final_value is not None), None)
+            fa = flexibility_area(sr)
+            if fa:
+                out[pid] = [a for a in out.get(pid, []) if a["area"] != "flexibility"] + [fa]
+    return out
+
+
+def _latest_results(db: Session, user: User, squad_id: int, season_id: int) -> dict | None:
+    """Every player's results (sit and reach, skinfolds included) for the latest test window with results this season."""
+    from .testing import _windows_for, squad_test_results
+    wins = _windows_for(db, squad_id, season_id)
+    return squad_test_results(squad_id, season_id, list(wins)[-1], db, user) if wins else None
+
+
+def _with_next_date(rep: dict, pg: dict) -> dict:
+    """Adds the date of the plan's next test week (the first test week after the last test and not before today)."""
+    nxt = rep.get("next")
+    if nxt:
+        from ..workload_service import today_lk
+        after = max(d for d in (nxt.get("after"), today_lk()) if d)
+        week = next((ws for ws, t in zip(pg["week_starts"], pg["test_weeks"]) if t and ws > after), None)
+        nxt["date"] = week
+    return rep
 
 
 def _personal(g: dict, p: Player, areas: dict[int, list[dict]]) -> dict:
@@ -373,7 +402,8 @@ def download_player_plans(squad_id: int, season_id: int, db: Session = Depends(g
     sheets = [(player_sheet_name(p.full_name, p.squad_no, used), _personal(g, p, areas)) for p in players]
     audit(db, user, "player_plans.exported", "season", season_id, f"{len(players)} players")
     db.commit()
-    return _xlsx(build_players_workbook(g, sheets), f"Seasonal-plans-all-players-{g['squad']}-{g['season']}")
+    return _xlsx(build_players_workbook(g, sheets, _latest_results(db, user, squad_id, season_id)),
+                 f"Seasonal-plans-all-players-{g['squad']}-{g['season']}")
 
 
 @router.get("/squads/{squad_id}/seasons/{season_id}/player-plans/{player_id}.xlsx")
@@ -385,6 +415,55 @@ def download_player_plan(squad_id: int, season_id: int, player_id: int, db: Sess
         raise HTTPException(404, "Player not found in this squad")
     g = _grid(db, user, squad_id, season_id)
     pg = _personal(g, p, _latest_areas(db, squad_id, season_id))
+    from .testing import player_test_report
+    tests = player_test_report(db, squad_id, season_id, p)
     audit(db, user, "player_plan.exported", "player", p.id)
     db.commit()
-    return _xlsx(build_seasonal_workbook(pg), f"Seasonal-plan-{p.full_name}-{g['season']}")
+    return _xlsx(build_seasonal_workbook(pg, tests=tests), f"Seasonal-plan-{p.full_name}-{g['season']}")
+
+
+@router.get("/squads/{squad_id}/seasons/{season_id}/player-plans.pdf")
+def download_all_annual_pdf(squad_id: int, season_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Every active player's Annual plan (the Excel sheet, built from their own tests: ranked tests and sit and reach) followed
+    by their test results, in one PDF - squad number order."""
+    from ..player_plan_pdf import build_players_annual_pdf
+    from .testing import player_test_report
+    authorize_squad(db, user, squad_id, "testing.read")
+    g = _grid(db, user, squad_id, season_id)
+    areas = _latest_areas(db, squad_id, season_id)
+    players = db.scalars(select(Player).where(Player.squad_id == squad_id, Player.is_active)
+                         .order_by(Player.standby, Player.squad_no.is_(None), Player.squad_no, Player.full_name)).all()
+    items = []
+    for p in players:
+        pg = _personal(g, p, areas)
+        items.append((pg, _with_next_date(player_test_report(db, squad_id, season_id, p), pg)))
+    data = build_players_annual_pdf(items)
+    audit(db, user, "player_plans.exported", "season", season_id, f"pdf annual, {len(players)} players")
+    db.commit()
+    name = re.sub(r"[^A-Za-z0-9]+", "-", f"Annual-plans-all-players-{g['squad']}-{g['season']}").strip("-")
+    return Response(data, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{name}.pdf"'})
+
+
+@router.get("/squads/{squad_id}/seasons/{season_id}/player-plans/{player_id}.pdf")
+def download_player_plan_pdf(squad_id: int, season_id: int, player_id: int, part: str = Query("all", pattern="^(all|annual|weeks)$"),
+                             db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """One player's seasonal plan as a PDF: part=annual is the Annual plan (the Excel sheet exactly) and the player's test results;
+    part=weeks is the Week plans (Monday to Friday sessions of every week); part=all is both. The same plan as the seasonal Excel."""
+    from ..player_plan_pdf import build_player_plan_pdf
+    from ..seasonal_workbook import _roles_of
+    from ..weekly_sessions import build_weeks
+    authorize_squad(db, user, squad_id, "testing.read")
+    p = db.get(Player, player_id)
+    if p is None or p.squad_id != squad_id:
+        raise HTTPException(404, "Player not found in this squad")
+    g = _grid(db, user, squad_id, season_id)
+    pg = _personal(g, p, _latest_areas(db, squad_id, season_id))
+    weeks = build_weeks(pg, roles=_roles_of(pg, None), extra_off=pg.get("rest_days")) if part in ("all", "weeks") else None
+    from .testing import player_test_report
+    tests = _with_next_date(player_test_report(db, squad_id, season_id, p), pg) if part in ("all", "annual") else None
+    data = build_player_plan_pdf(pg, weeks, part, tests)
+    audit(db, user, "player_plan.exported", "player", p.id, f"pdf {part}")
+    db.commit()
+    what = {"all": "Seasonal-plan", "annual": "Annual-plan", "weeks": "Week-plans"}[part]
+    name = re.sub(r"[^A-Za-z0-9]+", "-", f"{what}-{p.full_name}-{g['season']}").strip("-") or what
+    return Response(data, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{name}.pdf"'})

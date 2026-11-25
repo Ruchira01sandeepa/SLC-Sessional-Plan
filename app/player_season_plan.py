@@ -24,7 +24,10 @@ AREA_ROWS: dict[str, list[tuple[str, str]]] = {
     "speed": [("Physical", "Speed"), ("Technical", "Reaction speed")],
     "agility": [("Physical", "Coordination"), ("Technical", "Reaction speed")],
     "core": [("Physical", "Strength"), ("Physical", "Coordination")],
+    "flexibility": [("Physical", "Flexibility")],
 }
+# Flexibility comes from sit and reach (recorded, not ranked): cm past the toes (+) or short of them (-), against a fixed line.
+FLEX_WEAK, FLEX_STRONG = 0.0, 10.0          # cannot reach the toes -> focus; 10 cm or more past them -> strength
 NOT_TRAINING_DAY = {"rest", "match", "before"}
 # Competition days drawn one per day (a tournament): a weak area also gets a SHORT, low-load dose on the recovery days between
 # matches - easy aerobic flush, strides, reaction / footwork drills, a few low jumps, trunk and upper-body work. Never on a match
@@ -32,7 +35,21 @@ NOT_TRAINING_DAY = {"rest", "match", "before"}
 RECOVERY_DAYS = {"between", "after", "free"}
 RECOVERY_DOSE_ROWS = {("Physical", "Endurance"), ("Physical", "Speed"), ("Physical", "Strength"), ("Physical", "Coordination"),
                       ("Technical", "Reaction speed"), ("Technical", "Explosive power")}
-SHORT = {"endurance": "END", "power": "PWR", "upper_strength": "UPP", "speed": "SPD", "agility": "AGI", "core": "CORE"}
+SHORT = {"endurance": "END", "power": "PWR", "upper_strength": "UPP", "speed": "SPD", "agility": "AGI", "core": "CORE", "flexibility": "FLEX"}
+
+
+def flexibility_area(sit_reach_cm: float | None) -> dict | None:
+    """The sit-and-reach result as a plan area: weak when the player cannot reach the toes, strong at 10 cm or more past them."""
+    if sit_reach_cm is None:
+        return None
+    status = "weak" if sit_reach_cm < FLEX_WEAK else "strong" if sit_reach_cm >= FLEX_STRONG else "ok"
+    return {"area": "flexibility", "label": "Flexibility", "percentile": None, "status": status, "value": round(sit_reach_cm, 1),
+            "detail": f"sit and reach {sit_reach_cm:+.1f} cm"}
+
+
+def area_text(a: dict) -> str:
+    """'Leg power (8th)' or 'Flexibility (sit and reach -7.6 cm)'."""
+    return f"{a['label']} ({a['detail']})" if a.get("detail") else f"{a['label']} ({a['percentile']:.0f}th)"
 
 
 def classify(areas: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -40,6 +57,8 @@ def classify(areas: list[dict]) -> tuple[list[dict], list[dict]]:
     got = [a for a in areas if a.get("percentile") is not None and a["area"] in AREA_ROWS]
     weak = sorted((a for a in got if a["percentile"] < WEAK), key=lambda a: a["percentile"])
     strong = sorted((a for a in got if a["percentile"] >= STRONG), key=lambda a: -a["percentile"])
+    weak += [a for a in areas if a.get("status") == "weak" and a["area"] in AREA_ROWS]       # flexibility (sit and reach)
+    strong += [a for a in areas if a.get("status") == "strong" and a["area"] in AREA_ROWS]
     return weak, strong
 
 
@@ -78,6 +97,7 @@ def personal_grid(g: dict, *, name: str, role: str, areas: list[dict]) -> dict:
         ranks = [f"{SHORT[a['area']]} {round(a['percentile'])}" for a in sorted(
             (a for a in areas if a.get("percentile") is not None and a["area"] in SHORT), key=lambda a: a["percentile"])]
         perf = [None] * grid["weeks"]
+        ranks += [f"FLEX {a['value']:+.0f}cm" for a in areas if a.get("area") == "flexibility" and a.get("value") is not None]
         for i, txt in enumerate(ranks[:grid["weeks"]]):
             perf[i] = txt
         for i, t in enumerate(grid["test_weeks"]):

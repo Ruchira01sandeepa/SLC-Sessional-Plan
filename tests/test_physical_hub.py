@@ -180,4 +180,4 @@ def test_move_log_session_today_and_report(client, world, db):
     assert d["targets"] and all("targets" in t for t in d["targets"])
     x = client.get(f"{base}/physical-report.xlsx", headers=H(world, "admin"))
     assert x.status_code == 200
-    assert openpyxl.load_workbook(io.BytesIO(x.content)).sheetnames == ["Heat map", "Today", "S&C groups", "Targets", "Progress", "Growth"]
+    assert openpyxl.load_workbook(io.BytesIO(x.content)).sheetnames == ["Heat map", "Today", "S&C groups", "Targets", "Progress", "Growth", "Test results"]

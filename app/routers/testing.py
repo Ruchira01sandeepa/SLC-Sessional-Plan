@@ -712,7 +712,8 @@ def physical_report(squad_id: int, season_id: int, window: str | None = None, db
     audit(db, user, "physical_report.exported", "season", season_id)
     db.commit()
     name = re.sub(r"[^A-Za-z0-9]+", "-", f"physical-report-{squad.name}-{d['season']['name']}-{d['window']}").strip("-") or "physical-report"
-    return Response(build_physical_report(squad.name, d), media_type=XLSX, headers={"Content-Disposition": f'attachment; filename="{name}.xlsx"'})
+    results = squad_test_results(squad_id, season_id, d["window"], db, user) if d.get("window") else None
+    return Response(build_physical_report(squad.name, d, results), media_type=XLSX, headers={"Content-Disposition": f'attachment; filename="{name}.xlsx"'})
 
 
 # ───────────── periodized S&C seasonal plan (Zatsiorsky ch. 5 + youth ch. 10) ─────────────
@@ -970,7 +971,8 @@ def squad_test_results(squad_id: int, season_id: int, window: str, db: Session =
                         "window_label": WINDOW_LABEL[x0.window.value], "date": dates[0].isoformat() if dates else None,
                         "tested": len(xs), "current": k == here, "means": means,
                         "height_cm": _mean([x.height_cm for x in xs]), "weight_kg": _mean([x.weight_kg for x in xs]),
-                        "skinfold_sum": _mean(sums)})
+                        "skinfold_sum": _mean(sums),
+                        "sit_reach": _mean([e["sit_reach"]["final"] for e in map(_extras, xs) if e["sit_reach"]])})
 
     current = {x.player_id: x for x in by_slot.get(here, [])}
     earlier: dict[int, TestSession] = {}
@@ -1009,3 +1011,124 @@ def squad_test_results(squad_id: int, season_id: int, window: str, db: Session =
             "tests": [{"key": t.key, "label": t.label, "unit": t.unit, "kind": t.kind, "levels": list(t.levels),
                        "higher_is_better": t.higher_is_better, "reference": _ref(t)} for t in BY_KEY.values()],
             "sites": [{"key": k, "label": lab} for k, lab in SKINFOLD_SITES], "players": rows, "history": history}
+
+
+def player_test_report(db: Session, squad_id: int, season_id: int, p: Player) -> dict:
+    """One player's test results for the plan PDF: every window this season (trials, best, age reference, squad percentile,
+    body measures, skinfolds, band and SLC points) and the change between windows."""
+    from ..age_norms import age_band, reference
+    ag = db.scalar(select(Squad.age_group).where(Squad.id == squad_id)) or "U15"
+    wins = _windows_for(db, squad_id, season_id)
+    out = []
+    for w, (cats, sessions) in wins.items():
+        s = sessions.get(p.id)
+        if s is None:
+            continue
+        cat = cats.get(p.id) or {}
+        pct = {t["key"]: t.get("percentile") for a in cat.get("areas", []) for t in a.get("tests", [])}
+        tests = []
+        for r in sorted(s.results, key=lambda r: list(BY_KEY).index(r.test_key) if r.test_key in BY_KEY else 99):
+            t = BY_KEY.get(r.test_key)
+            if t is None or r.final_value is None:
+                continue
+            ref = reference(t.key, ag)
+            band = age_band(t.key, r.final_value, ag)
+            tests.append({"key": t.key, "label": t.label, "unit": t.unit,
+                          "trials": [_trial_shown(t, v) for v in (r.trial_1, r.trial_2, r.trial_3)], "best": display(t, r.final_value),
+                          "expected": display(t, ref[1]) if ref else None, "age": band["band"] if band else None,
+                          "age_label": band["label"] if band else None, "percentile": pct.get(t.key)})
+        ex = _extras(s)
+        bm = cat.get("benchmark")
+        out.append({"window": w, "window_label": WINDOW_LABEL[w], "level_label": LEVEL_LABEL[s.level],
+                    "test_date": s.test_date, "height_cm": s.height_cm, "weight_kg": s.weight_kg,
+                    "bmi": round(s.weight_kg / (s.height_cm / 100) ** 2, 1) if s.weight_kg and s.height_cm else None,
+                    "band": cat.get("band"), "band_label": cat.get("band_label"), "overall": cat.get("overall"),
+                    "benchmark": {k: bm[k] for k in ("total", "max", "band_label")} if bm else None,
+                    "focus": [f["label"] for f in cat.get("focus_areas", [])], "tests": tests,
+                    "sit_reach": ex["sit_reach"]["final"] if ex["sit_reach"] else None,
+                    "sit_reach_trials": ex["sit_reach"]["trials"] if ex["sit_reach"] else [None] * 3,
+                    "sit_reach_note": ex["sit_reach"]["note"] if ex["sit_reach"] else None,
+                    "skinfolds": [{"label": x["label"], "final": x["final"]} for x in ex["skinfolds"]],
+                    "skinfold_sum": ex["skinfold_sum"], "copied": ex["copied"]})
+    return {"age_group": ag, "windows": out, "progress": build_progress(_player_windows(p.id, wins)) if len(out) > 1 else None,
+            "next": _next_targets(p, ag, wins, out[-1]) if out else None}
+
+
+SR_STEP = 5.0            # sit and reach: aim about 5 cm further in one test window (short of the toes: towards / to the toes)
+
+
+def sit_reach_target(cm: float | None) -> dict | None:
+    """Short of the toes: 5 cm further, at most to the toes. Reaching the toes: +2 cm. 10 cm or more past the toes: keep it."""
+    if cm is None:
+        return None
+    if cm < 0:
+        target, kind, why = min(0.0, cm + SR_STEP), "focus", "Short of the toes: daily hamstring and lower-back work; aim for the toes."
+    elif cm < 10:
+        target, kind, why = cm + 2.0, "improve", "Reaches the toes: a small step further."
+    else:
+        target, kind, why = cm, "keep", "Already very flexible: keep it."
+    return {"key": "sit_reach", "label": "Sit and reach", "unit": "cm from toes", "now": f"{cm:+.1f}", "target": f"{target:+.1f}",
+            "kind": kind, "why": why}
+
+
+def _next_targets(p: Player, ag: str, wins: dict, last: dict) -> dict:
+    """The next test window and a target for every test of the latest one (physical_goal: about 15 rank points higher in the
+    same-level group, at least the age group's expected value, never more than 8% in one window), plus sit and reach."""
+    w = last["window"]
+    i = WINDOWS.index(w)
+    nxt = WINDOW_LABEL[WINDOWS[i + 1]] if i + 1 < len(WINDOWS) else "Next season's baseline"
+    cats, sessions = wins[w]
+    me = sessions[p.id]
+    cohort: dict[str, list[float]] = {}
+    for s in sessions.values():
+        if s.level == me.level:
+            for k, v in _finals(s).items():
+                cohort.setdefault(k, []).append(v)
+    gender = p.gender.value if getattr(p, "gender", None) is not None and hasattr(p.gender, "value") else "male"
+    targets = []
+    for t in last["tests"]:
+        test = BY_KEY[t["key"]]
+        value = _finals(me).get(t["key"])
+        pct = t.get("percentile")
+        area = {"area": test.area, "label": test.label, "percentile": pct or 0, "source": "test",
+                "tests": [{"key": t["key"], "value": value, "percentile": pct}]}
+        g = physical_goal(area, t["key"], cohort.get(t["key"]), nxt, ag, gender)
+        if not g:
+            continue
+        keep = (pct is not None and pct >= 75) or t.get("age") == "strong"
+        kind = "keep" if keep else "focus" if pct is not None and pct < 50 else "improve"
+        why = {"keep": "Already strong: keep it, a small step on is enough.", "focus": "Focus test: extra work in the plan until the next test.",
+               "improve": "A steady step forward."}[kind]
+        if t.get("expected"):
+            why += f" {ag} expected: {t['expected']} {test.unit}."
+        targets.append({"key": t["key"], "label": test.label, "unit": test.unit, "now": g["current_display"], "target": g["target_display"],
+                        "kind": kind, "why": why})
+    sr = sit_reach_target(last.get("sit_reach"))
+    if sr:
+        targets.append(sr)
+    return {"window_label": nxt, "after": last.get("test_date"), "targets": targets}
+
+
+
+def sit_reach_text(cm: float | None) -> str:
+    """'+2.5 cm (past the toes)' / '-10.2 cm (short of the toes)'."""
+    if cm is None:
+        return "-"
+    return f"{cm:+.1f} cm (" + ("past the toes" if cm > 0 else "short of the toes" if cm < 0 else "at the toes") + ")"
+
+
+def body_measures(db: Session, player_id: int, season_id: int, window: str | None = None) -> list[tuple[str, str]]:
+    """Recorded, not ranked: sit and reach, sum of 8 skinfolds, height, weight and BMI from the player's session for the window
+    (the latest window with a session if none is given)."""
+    q = select(TestSession).where(TestSession.player_id == player_id, TestSession.season_id == season_id)
+    sessions = sorted(db.scalars(q), key=lambda x: WINDOWS.index(x.window.value))
+    s = next((x for x in sessions if x.window.value == window), None) if window else (sessions[-1] if sessions else None)
+    if s is None:
+        return []
+    ex = _extras(s)
+    sr = ex["sit_reach"]
+    out = [("Sit and reach", sit_reach_text(sr["final"]) + (f" - {sr['note']}" if sr and sr.get("note") else "") if sr else "-"),
+           ("Sum of 8 skinfolds", f"{ex['skinfold_sum']:.1f} mm" if ex["skinfold_sum"] is not None else "-"),
+           ("Height", f"{s.height_cm:.1f} cm" if s.height_cm else "-"), ("Weight", f"{s.weight_kg:.1f} kg" if s.weight_kg else "-"),
+           ("BMI", f"{s.weight_kg / (s.height_cm / 100) ** 2:.1f}" if s.weight_kg and s.height_cm else "-")]
+    return out
