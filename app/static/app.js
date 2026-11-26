@@ -700,7 +700,9 @@ async function fitnessTab() {
   const controls = h("div", { class: "row no-print" }, seasonPicker(fitnessTab),
     h("select", { "aria-label": "Test window", onchange: (e) => { S.phase = e.target.value; fitnessTab(); } },
       Object.entries(PHASE).map(([k, v]) => h("option", { value: k, selected: k === phase }, v))),
-    d.error ? null : h("button", { class: "small", onclick: () => window.print() }, "Print / save PDF"),
+    d.error ? null : h("button", { class: "small", onclick: () => downloadFile(`/squads/${S.squad.id}/seasons/${S.season.id}/test-summary.pdf?window=${phase}`,
+      "Test-results-summary.pdf").catch((x) => toast(x.message)) }, "Download summary (PDF)"),
+    d.error ? null : h("button", { class: "small ghost", onclick: () => window.print() }, "Print page"),
     d.error ? null : h("button", { class: "small ghost", onclick: () => downloadFile(`/squads/${S.squad.id}/seasons/${S.season.id}/physical-report.xlsx?window=${phase}`,
       "physical-report.xlsx").catch((x) => toast(x.message)) }, "Download Excel"));
   if (d.error) return main.replaceChildren(h("div", { class: "bar" }, h("h1", {}, "Fitness report"), controls),

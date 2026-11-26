@@ -716,6 +716,21 @@ def physical_report(squad_id: int, season_id: int, window: str | None = None, db
     return Response(build_physical_report(squad.name, d, results), media_type=XLSX, headers={"Content-Disposition": f'attachment; filename="{name}.xlsx"'})
 
 
+@router.get("/squads/{squad_id}/seasons/{season_id}/test-summary.pdf")
+def test_summary_pdf(squad_id: int, season_id: int, window: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """The Fitness page's overall test results summary for one window as a professional PDF document."""
+    from ..test_summary_pdf import build_test_summary_pdf
+    d = squad_test_results(squad_id, season_id, window, db, user)
+    entries, _ = _cohort_entries(db, squad_id, season_id, d["window"])
+    i = WINDOWS.index(d["window"])
+    nxt = WINDOW_LABEL[WINDOWS[i + 1]] if i + 1 < len(WINDOWS) else "Next season's baseline"
+    data = build_test_summary_pdf(d, cz.categorise(entries), band_names=cz.BAND_NAMES, next_label=nxt, prepared=today_lk())
+    audit(db, user, "test_summary.exported", "season", season_id, d["window"])
+    db.commit()
+    name = re.sub(r"[^A-Za-z0-9]+", "-", f"test-results-summary-{d['squad']}-{d['season']['name']}-{d['window']}").strip("-") or "test-results-summary"
+    return Response(data, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{name}.pdf"'})
+
+
 # ───────────── periodized S&C seasonal plan (Zatsiorsky ch. 5 + youth ch. 10) ─────────────
 from .. import sc_periodization as scp  # noqa: E402
 from ..sc_periodization_excel import build_sc_season_workbook  # noqa: E402
