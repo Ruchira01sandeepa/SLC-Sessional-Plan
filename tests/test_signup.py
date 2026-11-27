@@ -1,6 +1,6 @@
 """Self sign-up with administrator approval."""
-from app.config import settings
-from app.models import ApprovalStatus, AuditLog, User, UserRole
+from app.core.config import settings
+from app.core.models import ApprovalStatus, AuditLog, User, UserRole
 from .conftest import PW, login, make_user
 
 NEW = {"full_name": "Kasun Perera", "email": "Kasun@slc.lk", "password": "N3wCoachPassword", "role": "coach", "note": "Western U15 head coach"}

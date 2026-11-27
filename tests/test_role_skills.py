@@ -3,9 +3,9 @@ from datetime import date, timedelta
 
 import pytest
 
-from app.models import SkillTemplate, TemplateKind, PlayerRole
-from app.role_skills import drill_groups, match_drills
-from app.workload_service import today_lk
+from app.core.models import SkillTemplate, TemplateKind, PlayerRole
+from app.reference.role_skills import drill_groups, match_drills
+from app.workload.workload_service import today_lk
 from .test_personal_plan import plan as make_plan
 from .test_testing import add_players, fill, get_template, good_row, make_season, upload
 

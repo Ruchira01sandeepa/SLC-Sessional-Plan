@@ -4,9 +4,9 @@ from datetime import date
 import pytest
 from sqlalchemy import select
 
-import app.routers.testing as testing_router
-from app.models import EventType, Player, PlayerRole, WorkloadLog
-from app.test_workload import bowling_advice, day_load, training_targets
+import app.api.testing as testing_router
+from app.core.models import EventType, Player, PlayerRole, WorkloadLog
+from app.workload.test_workload import bowling_advice, day_load, training_targets
 H = lambda w, who: w["h"][who]
 from .test_testing import add_players, fill, get_template, good_row, make_season, upload
 

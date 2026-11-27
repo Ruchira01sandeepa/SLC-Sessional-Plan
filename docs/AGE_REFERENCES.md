@@ -2,7 +2,7 @@
 
 Provisional reference points for boys (U15, U17, U19), used to label each result *for the player's age* and as a fallback
 when a level group is too small to rank (fewer than 5 players). They are references, not pass/fail standards.
-Values live in `app/age_norms.py`; replace them with SLC's own percentiles as tested data builds up.
+Values live in `app/assessment/age_norms.py`; replace them with SLC's own percentiles as tested data builds up.
 
 | Test | Unit | U15 dev / exp / strong | U17 dev / exp / strong | U19 dev / exp / strong | Basis |
 |---|---|---|---|---|---|

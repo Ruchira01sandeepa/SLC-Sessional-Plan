@@ -1,9 +1,9 @@
 """A player's seasonal plan as a PDF: the Annual plan and the Week plans."""
 import re
 
-from app.player_plan_pdf import build_player_plan_pdf
-from app.player_season_plan import personal_grid
-from app.weekly_sessions import build_weeks
+from app.exports.pdf.player_plan_pdf import build_player_plan_pdf
+from app.planning.player_season_plan import personal_grid
+from app.planning.weekly_sessions import build_weeks
 from tests.test_player_season_plan import H, grid, make_season
 
 
@@ -47,7 +47,7 @@ def test_pdf_download_and_access(client, world):
 
 
 def test_sit_and_reach_drives_a_flexibility_focus():
-    from app.player_season_plan import classify, flexibility_area
+    from app.planning.player_season_plan import classify, flexibility_area
     assert flexibility_area(None) is None
     assert flexibility_area(-5.1)["status"] == "weak" and flexibility_area(2.5)["status"] == "ok" and flexibility_area(12.7)["status"] == "strong"
     areas = [{"area": "speed", "label": "Speed", "percentile": 80.0}, flexibility_area(-15.2)]
@@ -70,8 +70,8 @@ def test_all_players_annual_pdf_and_sit_and_reach_in_the_plan(client, world):
     r = client.put(f"/players/{world['bob']}/tests/{sid}/baseline", headers=H(world, "sc_a"),
                    json={"level": "super_provincial", "test_date": "2027-02-01", "results": {"sit_reach": ["-8"], "broad_jump": ["180"]}})
     assert r.status_code == 200, r.text
-    from app.routers.plans import _latest_areas
-    from app.db import SessionLocal
+    from app.api.plans import _latest_areas
+    from app.core.db import SessionLocal
     with SessionLocal() as db:
         flex = next(a for a in _latest_areas(db, world["squad_a"], sid)[world["bob"]] if a["area"] == "flexibility")
     assert flex["status"] == "weak" and flex["value"] == -8.0
@@ -112,7 +112,7 @@ def test_sit_and_reach_is_in_every_plan_and_report_workbook(client, world):
 
 
 def test_next_test_date_and_targets():
-    from app.routers.testing import sit_reach_target
+    from app.api.testing import sit_reach_target
     assert sit_reach_target(-15.2)["target"] == "-10.2" and sit_reach_target(-2.5)["target"] == "+0.0"     # towards, at most to the toes
     assert sit_reach_target(4.0)["target"] == "+6.0" and sit_reach_target(12.7)["kind"] == "keep"
     assert sit_reach_target(None) is None
@@ -124,9 +124,9 @@ def test_pdf_report_carries_the_next_test(client, world):
         assert client.put(f"/players/{world[who]}/tests/{sid}/baseline", headers=H(world, "sc_a"),
                           json={"level": "super_provincial", "test_date": "2027-02-01",
                                 "results": {"broad_jump": [jump], "sit_reach": ["-6"]}}).status_code == 200
-    from app.db import SessionLocal
-    from app.models import Player
-    from app.routers.testing import player_test_report
+    from app.core.db import SessionLocal
+    from app.core.models import Player
+    from app.api.testing import player_test_report
     with SessionLocal() as db:
         rep = player_test_report(db, world["squad_a"], sid, db.get(Player, world["bob"]))
     nx = rep["next"]

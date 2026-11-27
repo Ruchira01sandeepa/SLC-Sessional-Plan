@@ -5,10 +5,10 @@ from datetime import date, timedelta
 import openpyxl
 import pytest
 
-from app.annual_grid import (COMP, GENERAL, LOADING, PEAK, PHASE_RULES, PRECOMP, ROW_KINDS, SEASON_PHASE_OF, SPECIAL, TRANS,
-                             build_grid)
-from app.exercise_kinds import PHASE_KINDS
-from app.season_phases import suggest_phases
+from app.planning.annual_grid import (COMP, GENERAL, LOADING, PEAK, PHASE_RULES, PRECOMP, ROW_KINDS, SEASON_PHASE_OF, SPECIAL, TRANS,
+                                      build_grid)
+from app.reference.exercise_kinds import PHASE_KINDS
+from app.planning.season_phases import suggest_phases
 
 H = lambda w, who: w["h"][who]
 
@@ -294,7 +294,7 @@ def test_one_week_tournament_grid():
 
 
 def test_text_is_never_a_formula(client, world, db):
-    from app.models import Squad
+    from app.core.models import Squad
     db.get(Squad, world["squad_a"]).name = "=HYPERLINK(\"http://x\")"
     db.commit()
     sid = season(client, world, name="@SUM(1)")
@@ -304,7 +304,7 @@ def test_text_is_never_a_formula(client, world, db):
 
 
 def test_no_medical_text_in_grid(client, world, db):
-    from app.models import PlayerMedical
+    from app.core.models import PlayerMedical
     db.add(PlayerMedical(player_id=world["bob"], current_health={"note": "SECRET-LUMBAR-STRESS"}))
     db.commit()
     sid = season(client, world)
@@ -316,7 +316,7 @@ def test_no_medical_text_in_grid(client, world, db):
 
 def test_tournament_sheet_is_day_by_day():
     """A season under 4 weeks is drawn with one column per day; the days follow the match days in the calendar."""
-    from app.annual_grid_excel import build_grid_workbook
+    from app.exports.excel.annual_grid_excel import build_grid_workbook
     s, e = date(2026, 11, 26), date(2026, 12, 5)
     matches = [date(2026, 11, 27), date(2026, 11, 30), date(2026, 12, 3)]
     g = build_grid(squad_name="Galle U15", season={"name": "T", "start_date": s, "end_date": e}, phases=suggest_phases(s, e),

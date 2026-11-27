@@ -5,15 +5,15 @@ from datetime import date
 import openpyxl
 import pytest
 
-from app.annual_grid import COMP, GENERAL, PRECOMP, SEASON_PHASE_OF, SPECIAL, TRANS, build_grid
-from app.component_distribution import COLUMNS, build_components
-from app.exercise_kinds import PHASE_KINDS
-from app.exercises import library
-from app.load_distribution import BOWL_OVERS_CAP, MAX_BOWL_DAYS, REPS_MAX, REPS_MIN, SPELL_MAX, build_interval_loads, build_loads, split_spells
-from app.season_phases import suggest_phases
-from app.seasonal_workbook import SHEETS, build_seasonal_workbook, season_phases_of, session_sheet_name
-from app.session_plans import DOSE, ROLE_LABEL, build_session
-from app.workload_rules import DEFAULT_FAST_LIMITS
+from app.planning.annual_grid import COMP, GENERAL, PRECOMP, SEASON_PHASE_OF, SPECIAL, TRANS, build_grid
+from app.planning.component_distribution import COLUMNS, build_components
+from app.reference.exercise_kinds import PHASE_KINDS
+from app.reference.exercises import library
+from app.planning.load_distribution import BOWL_OVERS_CAP, MAX_BOWL_DAYS, REPS_MAX, REPS_MIN, SPELL_MAX, build_interval_loads, build_loads, split_spells
+from app.planning.season_phases import suggest_phases
+from app.exports.excel.seasonal_workbook import SHEETS, build_seasonal_workbook, season_phases_of, session_sheet_name
+from app.planning.session_plans import DOSE, ROLE_LABEL, build_session
+from app.workload.workload_rules import DEFAULT_FAST_LIMITS
 
 H = lambda w, who: w["h"][who]
 ROLES = list(ROLE_LABEL)
@@ -143,7 +143,7 @@ def test_doses_are_conservative():
 
 
 def test_roles_without_own_lists_get_coach_rows_and_notes():
-    from app.exercises import library
+    from app.reference.exercises import library
     batting = {e["name"] for e in library()["groups"]["batting"]["skill"]}
     keeping = {e["name"] for e in library()["groups"]["keeping"]["skill"]}
     s = build_session("batter", "pre_season")
@@ -227,7 +227,7 @@ def test_running_block_follows_the_phases():
 
 
 def test_each_player_load_follows_their_own_weaknesses():
-    from app.player_season_plan import personal_grid
+    from app.planning.player_season_plan import personal_grid
     g = grid()
     k, n = g["kinds"], g["weeks"]
     weak = personal_grid(g, name="A", role="Batter", areas=[{"area": a, "label": a, "percentile": 10.0}
@@ -298,7 +298,7 @@ def test_endpoint_access_and_errors(client, world):
 
 
 def test_endpoint_includes_calendar_matches_and_no_medical_text(client, world, db):
-    from app.models import PlayerMedical
+    from app.core.models import PlayerMedical
     db.add(PlayerMedical(player_id=world["bob"], current_health={"note": "SECRET-LUMBAR-STRESS"}))
     db.commit()
     sid = make_season(client, world)
@@ -314,7 +314,7 @@ def test_endpoint_includes_calendar_matches_and_no_medical_text(client, world, d
 
 # ───────────── the week's session plans (Tue / Wed trainer, Mon / Thu / Fri school, no practice on public holidays) ─────────────
 def test_week_sessions_follow_the_practice_week_and_holidays():
-    from app.weekly_sessions import TABLE_LINES, build_weeks
+    from app.planning.weekly_sessions import TABLE_LINES, build_weeks
     g = grid()
     W = build_weeks(g, roles=ROLES)
     days = [d for wk in W["weeks"] for d in wk["days"] if d["kind"] != "outside"]
@@ -330,8 +330,8 @@ def test_week_sessions_follow_the_practice_week_and_holidays():
 
 
 def test_a_players_week_carries_their_focus_and_calendar_rest_days():
-    from app.player_season_plan import personal_grid
-    from app.weekly_sessions import build_weeks
+    from app.planning.player_season_plan import personal_grid
+    from app.planning.weekly_sessions import build_weeks
     pg = personal_grid(grid(), name="A", role="Batter", areas=[{"area": "core", "label": "Core", "percentile": 10.0}])
     W = build_weeks(pg, roles=["batter"], extra_off={date(2027, 1, 18): "School sports meet"})
     days = {d["date"]: d for wk in W["weeks"] for d in wk["days"]}

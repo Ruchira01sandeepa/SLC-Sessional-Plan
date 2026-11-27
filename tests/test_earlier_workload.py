@@ -4,9 +4,9 @@ from datetime import date, timedelta
 import pytest
 from sqlalchemy import select
 
-from app import earlier_workload as ew
-from app.models import WorkloadLog
-from app.workload_service import today_lk
+from app.workload import earlier_workload as ew
+from app.core.models import WorkloadLog
+from app.workload.workload_service import today_lk
 
 H = lambda w, who: w["h"][who]
 MON = date(2026, 10, 5)

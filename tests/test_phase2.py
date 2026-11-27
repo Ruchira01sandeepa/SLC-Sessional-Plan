@@ -191,7 +191,7 @@ def test_progress_change_from_baseline_and_direction(client, world, season):
 
 
 def test_squad_percentile_needs_enough_players_and_is_direction_aware(client, db, world, season):
-    from app.models import Gender, Player, PlayerRole
+    from app.core.models import Gender, Player, PlayerRole
     import datetime as dt
     w = world
     put(client, w, "sc_a", w["ann"], season, "baseline", BASE)

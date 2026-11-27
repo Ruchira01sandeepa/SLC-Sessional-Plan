@@ -14,23 +14,23 @@ Source: SLC National U15 Physical Testing SOP. Results are confidential: coaches
 | Provincial | height, weight, Bronco (mm.ss) |
 | Super Provincial | height, weight, 2 km run (mm.ss), standing broad jump (cm), push-ups, inverted row (reps), 20 m sprint (s), 5-10-5 (s), plank (s) |
 
-Times in minutes are **mm.ss** (8.25 = 8 min 25 s; seconds 00-59, so 8.75 is rejected). Best of three is final. Bronco and 2 km are never compared. Ranges in `app/test_battery.py` only catch typing errors; coaches should confirm them.
+Times in minutes are **mm.ss** (8.25 = 8 min 25 s; seconds 00-59, so 8.75 is rejected). Best of three is final. Bronco and 2 km are never compared. Ranges in `app/assessment/test_battery.py` only catch typing errors; coaches should confirm them.
 
 ## Categories
 * Players are ranked only against players of the **same level** in the same window. No outside standards.
-* Test percentile (direction-aware, mid-rank) → area average → overall score → **5 equal bands**: Developing, Emerging, Competent, Advanced, Elite (names are placeholders, edit `BAND_NAMES` in `app/categorisation.py`).
+* Test percentile (direction-aware, mid-rank) → area average → overall score → **5 equal bands**: Developing, Emerging, Competent, Advanced, Elite (names are placeholders, edit `BAND_NAMES` in `app/assessment/categorisation.py`).
 * A band needs at least 5 same-level players with results. A missing test is left out of the average, and the profile says how many areas the band rests on. Provincial players have one ranked area (endurance), shown as such.
 * Focus areas = every area below the middle (percentile under 50), weakest first.
 * Readiness (Ready / Caution / Hold) comes from the workload alerts and availability. It never changes the band. Caution = 80% load, Hold = no new load.
 
 ## Individual plan: development in all areas
 Every area of the player's level is in the plan, so the player develops across the board. Areas ranked below the middle are **priority areas** and get about **60%** of the exercise slots (12 per phase, the weakest area the most); the other areas share the remaining 40%, and every area has at least one slot. If nothing is below the middle, all areas share equally. Areas not tested yet are listed with general work.
-Focus area -> exercise kinds (`AREA_KINDS` in `app/individual_plan.py`) -> exercises from the supplied list, filtered by `exercise_kinds.PHASE_KINDS`. If a phase does not allow work for an area, the plan says where it is trained. Excel: Test summary, Focus plan, Weekly load, (Progress), then the squad workbook sheets for the player's role.
+Focus area -> exercise kinds (`AREA_KINDS` in `app/planning/individual_plan.py`) -> exercises from the supplied list, filtered by `exercise_kinds.PHASE_KINDS`. If a phase does not allow work for an area, the plan says where it is trained. Excel: Test summary, Focus plan, Weekly load, (Progress), then the squad workbook sheets for the player's role.
 
-## Personal sets and reps (`app/dosing.py`)
+## Personal sets and reps (`app/planning/dosing.py`)
 The supplied exercise list has no sets or reps, so each exercise type has a conservative U15 range (for example 8-12 reps, 2-3 sets). Each exercise in a player's plan starts at the **low end** and builds toward a **personal target**: priority areas aim for the top of the range (the weaker the area, the higher), other areas are kept near the lower-middle, untested areas stay low. In-season work is capped at the middle of the range, transition stays at the low end, and Caution stays at the low end. Nothing goes above the range. The plan says why for every exercise and gives the progression rule: add one rep (or one set once the reps reach the target) every two weeks if technique stays good and there is no pain; hold or step back if the player is sore or tired. Special cases (such as Nordic curls) stay at very low volume.
 
-## Workload in the plan (`app/plan_load.py`)
+## Workload in the plan (`app/workload/plan_load.py`)
 Load is counted like the workload log: session RPE x minutes (units), a week = 7 days, load ratio = this week / average of the last 4 weeks.
 1. **Start:** the player's average weekly load over the last 4 weeks of logged sessions (needs 3 weeks of history). With less, a **low starting estimate of 900 units** is used and the plan says so.
 2. **Shape:** the squad's weekly percentage shapes the season: 75% of the starting load at the lowest percentage, 140% at the peak, transition weeks at 60% of that.
@@ -51,10 +51,10 @@ Import the mid-season and end-of-season files the same way (pick the window in t
 * The Tests tab shows one line per player: band movement, tests improved, focus areas resolved or new.
 * The player's Excel plan gets a **Progress** sheet once there are two windows. Choosing a later window rebuilds the focus areas and plan from that window's results.
 * Only tests present in both windows are compared; nothing is estimated. Bands are relative to the same-level group in each window, so a player can improve and stay in the same band; the screens say so. Bronco and 2 km are never compared.
-Endpoints: `GET /players/{id}/test-progress`, `GET /squads/{id}/seasons/{sid}/test-progress`. Code: `app/test_progress.py`.
+Endpoints: `GET /players/{id}/test-progress`, `GET /squads/{id}/seasons/{sid}/test-progress`. Code: `app/assessment/test_progress.py`.
 
 ## Files
-`app/test_battery.py`, `app/test_import.py`, `app/test_template_excel.py`, `app/categorisation.py`, `app/individual_plan.py`, `app/dosing.py`, `app/plan_load.py`, `app/individual_plan_excel.py`, `app/test_progress.py`, `app/routers/testing.py`, migration `2458cef34f8b`, `tests/test_testing.py`, `scripts/ui_smoke_testing.py`.
+`app/assessment/test_battery.py`, `app/importers/test_import.py`, `app/exports/excel/test_template_excel.py`, `app/assessment/categorisation.py`, `app/planning/individual_plan.py`, `app/planning/dosing.py`, `app/workload/plan_load.py`, `app/exports/excel/individual_plan_excel.py`, `app/assessment/test_progress.py`, `app/api/testing.py`, migration `2458cef34f8b`, `tests/test_testing.py`, `scripts/dev/ui_smoke_testing.py`.
 
 ## Still to be fixed by SLC (SOP leaves these open)
 Push-up depth, cadence and limit; inverted-row bar height and limit; plank maximum time. The template records the set-up as text.

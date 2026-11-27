@@ -3,8 +3,8 @@ import sqlite3
 
 import pytest
 
-from app.config import settings
-from app.models import AuditLog, UserRole
+from app.core.config import settings
+from app.core.models import AuditLog, UserRole
 from .conftest import PW, make_user
 
 
@@ -181,7 +181,7 @@ def test_player_cannot_read_even_own_medical(client, world):
 def test_physio_of_other_squad_cannot_see_medical(client, db, world):
     w = world
     make_user(db, "physio_b@slc.lk", UserRole.physio)
-    from app.models import SquadStaff
+    from app.core.models import SquadStaff
     db.add(SquadStaff(user_id=db.query(type(w["users"]["admin"])).filter_by(email="physio_b@slc.lk").one().id, squad_id=w["squad_b"]))
     db.commit()
     from .conftest import login
@@ -216,7 +216,7 @@ def test_medical_cannot_be_decrypted_with_wrong_key(db, world):
     from cryptography.fernet import Fernet, InvalidToken
     import sqlite3 as s
     # write something, then try to open it with a different key
-    from app.models import PlayerMedical
+    from app.core.models import PlayerMedical
     db.add(PlayerMedical(player_id=world["ann"], current_health={"text": "secret"}))
     db.commit()
     path = settings.database_url.replace("sqlite:///", "")

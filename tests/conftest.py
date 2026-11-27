@@ -11,13 +11,13 @@ import pytest
 from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
 
-from app.db import Base, SessionLocal, engine
+from app.core.db import Base, SessionLocal, engine
 from app.main import app
-from app.models import Gender, Player, PlayerRole, Squad, SquadStaff, User, UserRole
-from app.security import hash_password
-from app.seed_templates import seed
+from app.core.models import Gender, Player, PlayerRole, Squad, SquadStaff, User, UserRole
+from app.core.security import hash_password
+from app.reference.seed_templates import seed
 
-import app.security as _sec
+import app.core.security as _sec
 _sec._ph = PasswordHasher(time_cost=1, memory_cost=8, parallelism=1)   # fast hashing for tests only
 
 PW = "Str0ngPassw0rd!"

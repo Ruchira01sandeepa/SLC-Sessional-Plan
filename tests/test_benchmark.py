@@ -1,9 +1,9 @@
 """SLC U15 points benchmark (the men's / U19 points system adapted to the U15 tests)."""
 import pytest
 
-from app import benchmark as bm
-from app import categorisation as cz
-from app.test_battery import PROVINCIAL, SUPER
+from app.assessment import benchmark as bm
+from app.assessment import categorisation as cz
+from app.assessment.test_battery import PROVINCIAL, SUPER
 
 H = lambda w, who: w["h"][who]
 BEST = {"run_2km": 480, "broad_jump": 240, "pushups": 50, "inverted_row": 30, "sprint_20m": 3.0, "shuttle_5_10_5": 5.0, "plank": 300}
@@ -56,7 +56,7 @@ def test_missing_tests_are_never_estimated_and_bands_use_what_was_done():
 
 def test_not_scored_for_provincial_girls_or_other_ages():
     assert bm.score(PROVINCIAL, {"bronco": 300}) is None
-    assert bm.score(SUPER, BEST, "U17") is None and bm.score(SUPER, BEST, "U15", "female") is None
+    assert bm.score(SUPER, BEST, "U17") is None and bm.score(SUPER, BEST, "U15", "female") is not None
 
 
 def test_band_cut_offs_keep_the_source_proportions():

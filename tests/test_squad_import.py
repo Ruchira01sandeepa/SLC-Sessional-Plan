@@ -6,8 +6,8 @@ import openpyxl
 import pytest
 from sqlalchemy import select
 
-from app.models import Player, Squad, UserRole
-from app.squad_import import parse_workbook
+from app.core.models import Player, Squad, UserRole
+from app.importers.squad_import import parse_workbook
 
 from .conftest import login, make_user
 

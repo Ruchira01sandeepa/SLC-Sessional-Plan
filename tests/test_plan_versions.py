@@ -5,10 +5,10 @@ from datetime import date, timedelta
 import openpyxl
 import pytest
 
-from app.models import WorkloadLog
-from app.plan_edits import EditError, apply_edits
-from app.plan_progress import exercise_progress, plan_progress
-from app.workload_service import today_lk
+from app.core.models import WorkloadLog
+from app.planning.plan_edits import EditError, apply_edits
+from app.planning.plan_progress import exercise_progress, plan_progress
+from app.workload.workload_service import today_lk
 from .test_personal_plan import plan as make_plan
 from .test_testing import add_players, fill, get_template, good_row, make_season, upload
 

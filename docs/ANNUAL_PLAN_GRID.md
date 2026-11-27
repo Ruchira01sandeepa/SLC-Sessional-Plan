@@ -9,7 +9,7 @@ Seasonal plan tab > "Download plan workbook" gives one Excel file:
 | Component distribution | The supplied cricket exercise list (spin, fast, fielding) grouped by type, with an x for each phase it suits | `component_distribution.py` |
 | One sheet per role and phase (for example "Fast Pre-comp") | A 60-minute session in the layout of the supplied "Session plan" sheet | `session_plans.py` |
 
-`seasonal_workbook.py` assembles the sheets. Endpoints (in `routers/plans.py`):
+`seasonal_workbook.py` assembles the sheets. Endpoints (in `app/api/plans.py`):
 `GET /squads/{id}/seasons/{id}/seasonal-workbook.xlsx[?roles=fast_bowler,batter]` (all sheets),
 `.../annual-plan.xlsx` (annual plan sheet only), `.../annual-plan` (JSON).
 

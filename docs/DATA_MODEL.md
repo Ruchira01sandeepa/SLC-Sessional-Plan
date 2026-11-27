@@ -41,5 +41,5 @@ Added for features in the spec that the workbook has no sheet for:
 
 ## Phase 2 additions
 * `fitness_tests.season_id` is now **required**: one test per player / season / phase.
-* Needs-analysis grid is validated against the workbook layout (`app/screening_schema.py`).
+* Needs-analysis grid is validated against the workbook layout (`app/assessment/screening_schema.py`).
 * Event times are stored in UTC; the UI shows them in the viewer's local time.

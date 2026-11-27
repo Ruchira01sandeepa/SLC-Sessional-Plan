@@ -5,14 +5,14 @@ from datetime import date
 import openpyxl
 import pytest
 
-from app import categorisation as cz
-from app.annual_grid import build_grid
-from app.exercise_kinds import PHASE_KINDS
-from app.individual_plan import AREA_KINDS, build_individual_plan
-from app.models import Gender, Player, PlayerRole
-from app.season_phases import suggest_phases
-from app.test_battery import BY_KEY, PROVINCIAL, SUPER, best_of, format_mmss, parse_mmss, parse_value
-from app.test_import import columns, parse_workbook, trial_header
+from app.assessment import categorisation as cz
+from app.planning.annual_grid import build_grid
+from app.reference.exercise_kinds import PHASE_KINDS
+from app.planning.individual_plan import AREA_KINDS, build_individual_plan
+from app.core.models import Gender, Player, PlayerRole
+from app.planning.season_phases import suggest_phases
+from app.assessment.test_battery import BY_KEY, PROVINCIAL, SUPER, best_of, format_mmss, parse_mmss, parse_value
+from app.importers.test_import import columns, parse_workbook, trial_header
 
 H = lambda w, who: w["h"][who]
 
@@ -120,7 +120,7 @@ def grid(start=date(2027, 1, 1), end=date(2027, 9, 30)):
 
 def cat_with(*weak, level=SUPER):
     """A categorisation result with every area of the level: the named areas are below the middle, the others above it."""
-    from app.test_battery import AREA_LABEL, areas_for
+    from app.assessment.test_battery import AREA_LABEL, areas_for
     areas = [{"area": x, "label": AREA_LABEL[x], "percentile": (10.0 + weak.index(x)) if x in weak else 70.0} for x in areas_for(level)]
     return {"overall": 30.0, "areas": areas,
             "focus_areas": sorted(({"area": a["area"], "label": a["label"], "percentile": a["percentile"]} for a in areas if a["area"] in weak), key=lambda f: f["percentile"])}
@@ -143,7 +143,7 @@ def test_plan_only_holds_allowed_work(role):
 
 
 def test_allocate_priority_areas_get_most_but_no_area_is_dropped():
-    from app.individual_plan import TOTAL_SLOTS, allocate
+    from app.planning.individual_plan import TOTAL_SLOTS, allocate
     areas = [{"area": k, "percentile": p} for k, p in (("core", 10.0), ("speed", 30.0), ("power", 70.0), ("agility", 80.0), ("endurance", 60.0), ("upper_strength", 90.0))]
     s = allocate(areas)
     assert sum(s.values()) == TOTAL_SLOTS and all(v >= 1 for v in s.values())
@@ -410,7 +410,7 @@ def test_pain_flag_puts_the_plan_on_hold(client, world, db):
     sid = make_season(client, world)
     upload(client, world, fill(get_template(client, world, sid).content, {pid: good_row(i) for i, pid in enumerate(ids)}), sid, confirm=True)
     p = db.get(Player, ids[0])
-    from app.models import Availability
+    from app.core.models import Availability
     p.availability = Availability.unavailable
     db.commit()
     plan = client.get(f"/players/{ids[0]}/individual-plan?season_id={sid}&window=baseline", headers=H(world, "admin")).json()
@@ -447,7 +447,7 @@ def test_parse_workbook_limits():
 
 
 # ───────────── progress between windows ─────────────
-from app.test_progress import progress as prog_of
+from app.assessment.test_progress import progress as prog_of
 
 
 def win(w, finals, level=SUPER, cat=None):
@@ -517,7 +517,7 @@ def test_progress_api_player_and_squad(client, world, db):
 
 
 # ───────────── planned workload ─────────────
-from app.plan_load import ACWR_CAP, EASY_AFTER, RISE_CAP, START_LOAD, plan_weeks, verify
+from app.workload.plan_load import ACWR_CAP, EASY_AFTER, RISE_CAP, START_LOAD, plan_weeks, verify
 
 
 def mk_weeks(n=30, pcts=None, phases=None, matches=None, tests=None):
@@ -619,8 +619,8 @@ def test_individual_plan_api_has_load_and_all_areas(client, world, db):
 
 def test_plan_uses_the_players_real_logged_load(client, world, db):
     from datetime import timedelta
-    from app.models import EventType, WorkloadLog
-    from app.workload_service import today_lk
+    from app.core.models import EventType, WorkloadLog
+    from app.workload.workload_service import today_lk
     ids = add_players(db, world)
     sid = make_season(client, world)
     upload(client, world, fill(get_template(client, world, sid).content, {pid: good_row(i) for i, pid in enumerate(ids)}), sid, confirm=True)
@@ -638,8 +638,8 @@ def test_plan_uses_the_players_real_logged_load(client, world, db):
 
 
 # ───────────── personal sets and reps ─────────────
-from app.dosing import personal_dose
-from app.session_plans import DOSE
+from app.planning.dosing import personal_dose
+from app.planning.session_plans import DOSE
 
 
 def dose(kind="leg_strength", phase="pre_competition", priority=True, pct=10.0, status="ready", name="Squat"):
@@ -702,7 +702,7 @@ def grid_with_matches(n_per_week=1, start=date(2027, 1, 1), end=date(2027, 9, 30
 
 
 def test_matches_are_part_of_the_weekly_load():
-    from app.plan_load import MATCH_UNITS
+    from app.workload.plan_load import MATCH_UNITS
     g = grid_with_matches()
     plan = build_individual_plan(player={"name": "P", "role": "batter"}, cat=cat_with("core"), ready=READY, g=g, workload=logged())
     played = [w for w in plan["weeks"] if w["matches"]]
@@ -723,7 +723,7 @@ def test_batter_has_no_bowling_load_bowlers_do():
 
 
 def test_fast_bowler_limits_hold_with_matches_counted():
-    from app.workload_rules import DEFAULT_FAST_LIMITS as L
+    from app.workload.workload_rules import DEFAULT_FAST_LIMITS as L
     for per_week in (1, 2, 3):
         g = grid_with_matches(per_week)
         plan = build_individual_plan(player={"name": "P", "role": "fast_bowler"}, cat=cat_with("core"), ready=READY, g=g, workload=logged())
@@ -734,7 +734,7 @@ def test_fast_bowler_limits_hold_with_matches_counted():
 
 
 def test_bowling_is_reduced_never_added_to_fit_the_load():
-    from app.load_distribution import build_loads
+    from app.planning.load_distribution import build_loads
     g = grid_with_matches(1)
     squad = build_loads(g)
     light = {"history_days": 40, "chronic_weekly_load_28d": 1000, "weekly_loads_oldest_first": [1000] * 8}
@@ -745,7 +745,7 @@ def test_bowling_is_reduced_never_added_to_fit_the_load():
 
 
 def test_match_load_alone_above_the_limit_is_flagged_not_hidden():
-    from app.plan_load import MATCH_UNITS
+    from app.workload.plan_load import MATCH_UNITS
     weeks = [{"week": i + 1, "phase": "in_season", "percentage": 0.5, "matches": 3 if i == 4 else 0, "test": False} for i in range(8)]
     r = plan_weeks(weeks=weeks, status="ready", workload=logged(chronic=800, weeks=(800,) * 4), sessions_by_phase={"in_season": 2})
     w5 = r["weeks"][4]
@@ -755,7 +755,7 @@ def test_match_load_alone_above_the_limit_is_flagged_not_hidden():
 
 
 def test_estimate_start_includes_the_first_weeks_matches():
-    from app.plan_load import MATCH_UNITS
+    from app.workload.plan_load import MATCH_UNITS
     weeks = [{"week": i + 1, "phase": "in_season", "percentage": 0.6, "matches": 1, "test": False} for i in range(6)]
     r = plan_weeks(weeks=weeks, status="ready", workload=None, sessions_by_phase={})
     assert r["summary"]["start_load"] == START_LOAD + MATCH_UNITS and "first week's match" in r["summary"]["source"]

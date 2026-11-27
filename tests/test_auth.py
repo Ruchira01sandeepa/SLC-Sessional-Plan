@@ -2,8 +2,8 @@ from datetime import datetime, timedelta, timezone
 
 import jwt
 
-from app.config import settings
-from app.models import AuditLog, User, UserRole
+from app.core.config import settings
+from app.core.models import AuditLog, User, UserRole
 from .conftest import PW, login, make_user
 
 

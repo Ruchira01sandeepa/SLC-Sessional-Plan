@@ -1,8 +1,8 @@
 """The squad's Physical page: dashboard, S&C groups, re-test and progress, growth."""
 from datetime import date
 
-from app import physical_hub as ph
-from app.exercise_kinds import PHASE_KINDS
+from app.assessment import physical_hub as ph
+from app.reference.exercise_kinds import PHASE_KINDS
 from .test_testing import add_players, fill, get_template, good_row, make_season, upload
 
 H = lambda w, who: w["h"][who]
@@ -92,9 +92,9 @@ from datetime import timedelta
 import openpyxl
 from sqlalchemy import select
 
-from app.models import WellnessLog, WorkloadLog
-from app.player_profile import physical_goal
-from app.workload_service import today_lk
+from app.core.models import WellnessLog, WorkloadLog
+from app.planning.player_profile import physical_goal
+from app.workload.workload_service import today_lk
 
 
 def test_today_strictest_rule_wins_and_all_reasons_are_listed():

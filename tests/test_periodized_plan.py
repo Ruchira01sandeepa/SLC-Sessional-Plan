@@ -5,9 +5,9 @@ from datetime import date
 import openpyxl
 import pytest
 
-from app import periodized_plan as pp
-from app.periodized_excel import build_workbook
-from app.season_phases import suggest_phases
+from app.planning import periodized_plan as pp
+from app.exports.excel.periodized_excel import build_workbook
+from app.planning.season_phases import suggest_phases
 
 H = lambda w, who: w["h"][who]
 TOURNAMENT = ({"name": "Galle", "start_date": date(2026, 11, 26), "end_date": date(2026, 12, 5)},

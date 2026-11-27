@@ -6,12 +6,12 @@ from datetime import date
 import openpyxl
 import pytest
 
-from app.config import settings
-from app.exercise_kinds import PHASE_KINDS
-from app.exercises import exercises_for, library
-from app.models import UserRole
-from app.role_kpis import ALL_KPIS, KPIS, validate_role_specific
-from app.season_phases import suggest_phases
+from app.core.config import settings
+from app.reference.exercise_kinds import PHASE_KINDS
+from app.reference.exercises import exercises_for, library
+from app.core.models import UserRole
+from app.reference.role_kpis import ALL_KPIS, KPIS, validate_role_specific
+from app.planning.season_phases import suggest_phases
 from .conftest import PW, login, make_user
 
 H = lambda w, who: w["h"][who]
@@ -24,7 +24,7 @@ def admin_only(monkeypatch):
 
 
 def test_default_lets_every_role_sign_in_and_admin_only_still_works():
-    from app.config import Settings
+    from app.core.config import Settings
     s = Settings(_env_file=None, enabled_roles="admin")
     assert s.role_enabled("admin") and not s.role_enabled("player") and not s.role_enabled("coach")
     assert Settings.model_fields["enabled_roles"].default == "all"
@@ -32,7 +32,7 @@ def test_default_lets_every_role_sign_in_and_admin_only_still_works():
 
 def test_enabled_roles_validation():
     from pydantic import ValidationError
-    from app.config import Settings
+    from app.core.config import Settings
     assert Settings(enabled_roles="ALL").role_enabled("player")
     s = Settings(enabled_roles="admin, coach")
     assert s.role_enabled("coach") and not s.role_enabled("physio")
@@ -118,13 +118,13 @@ def test_admin_can_list_and_see_squad_staff(client, world):
 
 # ───────────── role-specific measures ─────────────
 def test_every_role_has_measures_and_shared_ones_are_identical():
-    from app.models import PlayerRole
+    from app.core.models import PlayerRole
     assert set(KPIS) == set(PlayerRole) and all(KPIS[r] for r in PlayerRole)
     assert "gather_to_release_s" in ALL_KPIS and ALL_KPIS["gather_to_release_s"].higher_is_better is False
 
 
 def test_validate_role_specific_rules():
-    from app.models import PlayerRole as R
+    from app.core.models import PlayerRole as R
     assert validate_role_specific(R.fast_bowler, {"avg_speed_kmh": 95.5, "new_ball_role": 3}) == {"avg_speed_kmh": 95.5, "new_ball_role": 3}
     assert validate_role_specific(R.fast_bowler, {"avg_speed_kmh": None}) == {"avg_speed_kmh": None}
     for role, bad in [(R.fast_bowler, {"strike_rate": 100}), (R.fast_bowler, {"avg_speed_kmh": 950}), (R.fast_bowler, {"new_ball_role": 3.5}),
@@ -189,8 +189,8 @@ def test_role_measure_targets(client, world):
 
 # ───────────── exercise library ─────────────
 def test_library_matches_the_supplied_file_and_is_reproducible():
-    from scripts.build_exercise_library import build
-    from app.exercises import ADDED_GROUPS
+    from scripts.dev.build_exercise_library import build
+    from app.reference.exercises import ADDED_GROUPS
     lib = library()
     supplied = {**lib, "groups": {k: v for k, v in lib["groups"].items() if k not in ADDED_GROUPS}}
     assert build() == supplied                          # the supplied part is exactly what the text file produces

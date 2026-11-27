@@ -359,7 +359,7 @@ async function selectSquad(id) {
 function drawTabs() {
   const tabs = S.squad ? [["players", "Players"], ["calendar", "Calendar"]] : [];
   if (S.squad && !can("player")) tabs.unshift(["overview", "Overview"]);
-  if (S.squad && !can("player")) tabs.push(["fitness", "Fitness"]);
+  if (S.squad && can("coach", "sc_coach", "admin")) tabs.push(["fitness", "Fitness"]);      // test results: testing.read (not physios)
   if (S.squad && can("coach", "sc_coach", "physio", "admin")) tabs.push(["workload", "Workload"]);
   if (S.squad && can("coach", "sc_coach", "admin")) tabs.push(["physical", "Physical"], ["tests", "Tests"]);
   if (S.squad && can("coach", "admin")) tabs.push(["plan", "Seasonal plan"]);
@@ -513,15 +513,17 @@ async function playersTab() {
   const players = await api(`/players?squad_id=${S.squad.id}`);
   const main = $("#main");
   main.replaceChildren(
-    h("div", { class: "bar" }, h("h1", {}, S.squad.name), can("coach", "admin") ? h("button", { onclick: () => addPlayerForm() }, "+ Add player") : null),
+    h("div", { class: "bar" }, h("h1", {}, S.squad.name), can("coach", "admin") ? h("button", { onclick: () => addPlayerForm(players) }, "+ Add player") : null),
     players.length ? h("div", { class: "list" }, players.map((p) => h("button", { class: "item", onclick: () => { S.pid = p.id; go("players"); } },
       h("span", {}, h("strong", {}, (p.squad_no ? "#" + p.squad_no + "  " : "") + p.full_name), h("br"), h("span", { class: "sub" }, ROLE[p.role] + " · age " + p.age), p.captaincy ? h("span", { class: "chip" }, CAPT[p.captaincy]) : null, p.standby ? h("span", { class: "chip" }, "Stand-by") : null),
       h("span", { class: "chip " + p.availability }, p.availability)))) : h("div", { class: "empty" }, "No players in this squad yet."));
 }
 
-function addPlayerForm() {
+function addPlayerForm(players = []) {
+  // a women's / girls' squad (most players female): new players default to Female, so their results use the women's references
+  const fem = players.filter((p) => p.gender === "female").length * 2 > players.length && players.length > 0;
   const f = { name: h("input", { required: true }), dob: h("input", { type: "date", required: true }), no: h("input", { type: "number", min: 1, max: 99 }),
-    gender: h("select", {}, h("option", { value: "male" }, "Male"), h("option", { value: "female" }, "Female")),
+    gender: h("select", {}, h("option", { value: "male", selected: !fem }, "Male"), h("option", { value: "female", selected: fem }, "Female")),
     role: h("select", {}, Object.entries(ROLE).map(([k, v]) => h("option", { value: k }, v))) };
   const err = h("div", { class: "err", role: "alert" });
   $("#main").replaceChildren(h("form", { class: "card", onsubmit: async (e) => {
@@ -590,7 +592,7 @@ async function playerView(id) {
 async function screeningForm(p) {
   const grid = await api("/meta/needs-grid");
   const f = {
-    date: h("input", { type: "date", required: true, value: new Date().toISOString().slice(0, 10) }),
+    date: h("input", { type: "date", required: true, value: todayStr() }),
     band: h("select", {}, [["", "–"], ["less_than_5", "Less than 5 years"], ["5_to_10", "5-10 years"], ["over_10", "Over 10 years"]].map(([v, l]) => h("option", { value: v }, l))),
     start: h("input", { type: "number", min: 3, max: 16 }),
     f3: h("input", { type: "number", min: 0, max: 100 }), f1: h("input", { type: "number", min: 0, max: 100 }), ft: h("input", { type: "number", min: 0, max: 100 }),
@@ -716,6 +718,7 @@ const AGE_CLS = { strong: "c-good", on_track: "c-s1", developing: "c-warning", b
 const AGE_TXT = { strong: "Strong for age", on_track: "On track", developing: "Developing", below: "Below reference" };
 
 function fitnessReport(d, cats, brand, phase, controls) {
+  d = { ...d, age_group: d.ref_label || d.age_group };                 // women's squads: "U15 girls", "U19 women"
   const used = d.tests.filter((t) => d.players.some((r) => r.values[t.key] != null));
   const tested = d.players.filter((r) => r.level);
   const catBy = Object.fromEntries(((cats && cats.players) || []).map((c) => [c.player_id, c]));
@@ -754,7 +757,8 @@ function fitnessReport(d, cats, brand, phase, controls) {
     Charts.stat({ label: `Results at or above ${d.age_group} expected`, value: pct == null ? "–" : `${pct}%`, sub: `${meets} of ${ageVals.length} results`,
       tone: pct == null ? null : pct >= 60 ? "good" : pct >= 40 ? "warning" : "critical" }),
     Charts.stat({ label: `Average ${d.age_group} points`, value: pts.length ? f1(mean(pts.map((b) => b.total))) : "–",
-      sub: pts.length ? `out of ${pts[0].max} · SLC benchmark` : "needs a full test set" }),
+      sub: pts.length ? `out of ${pts[0].max} · SLC benchmark`
+        : d.gender !== "female" && !/^U15/.test(d.age_group) ? "no SLC benchmark for this age group" : "Super Provincial players only" }),
     Charts.stat({ label: "Squad average", value: `${f1(mean(tested.map((r) => r.height_cm)))} cm`,
       sub: `${f1(mean(tested.map((r) => r.weight_kg)))} kg · sum of 8 skinfolds ${f1(mean(tested.map((r) => r.skinfold_sum)))} mm` }));
 
@@ -793,7 +797,7 @@ function fitnessReport(d, cats, brand, phase, controls) {
     const refs = [{ value: avg - base, label: `avg ${show(t, avg)}` }];
     if (ref) refs.push({ value: ref.expected - base, label: `${d.age_group} ${ref.expected_display}` });
     const top = Math.max(...all.map((v) => v - base));
-    if (refs.length === 2 && Math.abs(refs[0].value - refs[1].value) < top * 0.14) {     // labels would overlap: one label, both lines kept
+    if (refs.length === 2 && Math.abs(refs[0].value - refs[1].value) < top * 0.25) {     // labels would overlap: one label, both lines kept
       const [lo, hi] = refs[0].value <= refs[1].value ? [refs[0], refs[1]] : [refs[1], refs[0]];
       lo.label = `${lo.label} · ${hi.label}`; hi.label = "";
     }
@@ -837,7 +841,7 @@ function fitnessReport(d, cats, brand, phase, controls) {
     h("h2", { class: "rep-section" }, "Full results"), resultsTable(d, used, tested, catBy, open, { mean, f1, show, dates, levels }),
     h("footer", { class: "rep-foot" }, brand.logo ? h("img", { src: brand.logo, alt: "", class: "rep-foot-logo" }) : null,
       h("div", {}, h("strong", {}, `Sri Lanka Cricket · ${d.squad}`), h("div", { class: "sub" },
-        `${d.age_group} physical test report · ${d.season.name} · ${d.window_label} · prepared ${fdate(new Date().toISOString().slice(0, 10))}. ` +
+        `${d.age_group} physical test report · ${d.season.name} · ${d.window_label} · prepared ${fdate(todayStr())}. ` +
         `Reference values: ${d.age_group} youth norms (published where available, otherwise SLC estimates). Best of 3 trials; times in mm.ss.`))));
 }
 
@@ -861,10 +865,11 @@ function sitReachSection(d, tested, open, short) {
         Charts.hbars({ ariaLabel: "Sit and reach by player", refs: Math.abs(avg) < (Math.max(...vals) - base) * 0.14
             ? [{ value: Math.min(0, avg) - base, label: `toes · avg ${srTxt(avg)}` }, { value: Math.max(0, avg) - base, label: "" }]
             : [{ value: -base, label: "toes" }, { value: avg - base, label: `avg ${srTxt(avg)}` }],
-          data: rows.map((r) => ({ label: short(r.name), sub: r.squad_no != null ? `#${r.squad_no}` : null, value: r.sit_reach - base,
-            display: `${srTxt(r.sit_reach)} cm`, cls: srCls(r.sit_reach), onClick: open(r),
-            tip: [r.name, `${srTxt(r.sit_reach)} cm`, r.sit_reach < 0 ? "Short of the toes: flexibility is a focus in the plan" : "Reaches the toes"] })) }),
-        legend),
+          data: rows.map((r) => ({ label: short(r.name) + (r.sit_reach_copied ? " *" : ""), sub: r.squad_no != null ? `#${r.squad_no}` : null, value: r.sit_reach - base,
+            display: `${srTxt(r.sit_reach)} cm`, cls: r.sit_reach_copied ? "c-muted" : srCls(r.sit_reach), onClick: open(r),
+            tip: [r.name, `${srTxt(r.sit_reach)} cm`, r.sit_reach < 0 ? "Short of the toes: flexibility is a focus in the plan" : "Reaches the toes", r.sit_reach_copied] })) }),
+        legend,
+        rows.some((r) => r.sit_reach_copied) ? h("p", { class: "hint warn" }, "* Grey bars were not measured: copied from the comparison player the coach chose. Measure these players at the next test.") : null),
       card("Squad flexibility", "Recorded, not ranked. Players short of the toes get daily hamstring and lower-back work in their plan.",
         h("div", { class: "kpis" },
           Charts.stat({ label: "Reach the toes", value: `${past.length} / ${rows.length}`, tone: past.length >= shortOf.length ? "good" : "warning" }),
@@ -943,7 +948,7 @@ function resultsTable(d, used, tested, catBy, open, u) {
             h("td", {}, fmt(r.height_cm, 1)), h("td", {}, u.f1(r.weight_kg)), h("td", {}, u.f1(r.bmi)),
             used.flatMap((t) => (trialsOf(t)
               ? [...(r.trials[t.key] || [null, null, null]).map((v) => h("td", { class: "sub" }, v ?? "–")), cell(r, t)] : [cell(r, t)])),
-            anySR ? h("td", { class: r.sit_reach < 0 ? "down" : "" }, srTxt(r.sit_reach)) : null,
+            anySR ? h("td", { class: r.sit_reach < 0 ? "down" : "", title: r.sit_reach_copied || null }, srTxt(r.sit_reach) + (r.sit_reach_copied ? " *" : "")) : null,
             showSites ? d.sites.map((x) => h("td", {}, u.f1(r.skinfolds[x.key]))) : null,
             h("td", { class: r.third_needed ? "down" : "" }, h("strong", {}, u.f1(r.skinfold_sum))),
             h("td", {}, c && c.band ? bandChip(c) : "–"), h("td", {}, c ? benchChip(c.benchmark) : "–")));
@@ -953,6 +958,7 @@ function resultsTable(d, used, tested, catBy, open, u) {
           foot("Squad average", avg, [u.f1(u.mean(tested.map((r) => r.height_cm))), u.f1(u.mean(tested.map((r) => r.weight_kg))), u.f1(u.mean(tested.map((r) => r.bmi))),
             srTxt(u.mean(tested.map((r) => r.sit_reach))), true, u.f1(u.mean(tested.map((r) => r.skinfold_sum)))]),
           foot(`${d.age_group} expected`, (t) => (t.reference ? t.reference.expected_display : "–"), ["", "", "", "", false, ""])))),
+      d.players.some((r) => r.sit_reach_copied) ? h("p", { class: "hint warn" }, "* after a sit and reach: not measured, copied from the comparison player the coach chose (hover the value).") : null,
       d.players.some((r) => r.copied.length) ? h("p", { class: "hint warn" }, "* Skinfolds not measured: copied from the comparison player the coach chose (hover the row). Replace them with real measurements when possible.") : null,
       anySR ? null : h("p", { class: "sub" }, "Sit and reach: no results yet. The column appears once a result is entered."));
   };
@@ -985,7 +991,7 @@ async function fitnessForm(p, phase) {
   const sess = tst ? tst.sessions.find((x) => x.window === phase) : null;
   const kinputs = kpis.map((m) => [m.field, h("input", { type: "number", step: m.unit === "1-5 rating" ? "1" : "any", min: m.lo, max: m.hi, inputMode: "decimal", value: (existing.role_specific || {})[m.field] ?? "" }), `${m.label} (${m.unit})`]);
   const ph = h("select", { onchange: () => fitnessForm(p, ph.value) }, Object.entries(PHASE).map(([k, v]) => h("option", { value: k, selected: k === phase }, v)));
-  const date = h("input", { type: "date", required: true, value: (sess && sess.test_date) || existing.test_date || new Date().toISOString().slice(0, 10) });
+  const date = h("input", { type: "date", required: true, value: (sess && sess.test_date) || existing.test_date || todayStr() });
   const inputs = FIELDS.map(([k, l, step]) => [k, h("input", { type: step ? "number" : "text", step, value: typeof existing[k] === "number" ? +existing[k].toFixed(3) : existing[k] ?? "", inputMode: "decimal" }), l]);
   const err = h("div", { class: "err", role: "alert" });
 
@@ -1237,10 +1243,11 @@ const CAPT = { captain: "Captain", vice_captain: "Vice-captain" };
 function squadImport() {
   const file = h("input", { type: "file", accept: ".xlsx", "aria-label": "Squad sheet (.xlsx)" });
   const age = h("select", { "aria-label": "Age group" }, [["", "Age group: from the sheet title"], ["U15", "Under 15"], ["U17", "Under 17"], ["U19", "Under 19"]].map(([v, t]) => h("option", { value: v }, t)));
+  const team = h("select", { "aria-label": "Team" }, [["male", "Boys / men"], ["female", "Girls / women"]].map(([v, t]) => h("option", { value: v }, t)));
   const result = h("div");
   const send = async (confirm, extra = {}) => {
     if (!file.files[0]) { toast("Choose the squad .xlsx file first"); return null; }
-    const q = new URLSearchParams({ confirm, filename: file.files[0].name, ...(age.value ? { age_group: age.value } : {}), ...extra });
+    const q = new URLSearchParams({ confirm, filename: file.files[0].name, ...(age.value ? { age_group: age.value } : {}), gender: team.value, ...extra });
     const res = await fetch(`/admin/squads/import?${q}`, { method: "POST", headers: { Authorization: "Bearer " + S.token, "Content-Type": "application/octet-stream" },
       body: await file.files[0].arrayBuffer() });
     const j = await res.json().catch(() => ({}));
@@ -1281,7 +1288,7 @@ function squadImport() {
   return h("div", {}, h("h3", {}, "Import squad from Excel"),
     h("p", { class: "sub" }, "Upload the squad list (Ranking, Player Name, DOB, School, District, Province, Bat, Bowl, with group headings such as " +
       "Batting group, Spin group, Pace group and Stand By). Check the preview, then create the squad with all its players."),
-    h("div", { class: "row" }, file, age, h("button", { class: "small", onclick: async () => {
+    h("div", { class: "row" }, file, age, team, h("button", { class: "small", onclick: async () => {
       try { const j = await send(false); if (j) preview(j); } catch (x) { result.replaceChildren(h("div", { class: "err" }, x.message)); }
     } }, "Check file")), result);
 }
@@ -1756,8 +1763,10 @@ function windowPicker(current, onchange) {
 }
 
 function ageNormsCard(n, ag) {
-  return h("details", { class: "card" }, h("summary", {}, `Age references · ${ag}`),
-    h("p", { class: "sub" }, "Provisional reference points for boys, from published youth data where it exists. Replace with SLC's own data over time."),
+  const fem = n.gender === "female";
+  return h("details", { class: "card" }, h("summary", {}, `Age references · ${(n.labels && n.labels[ag]) || ag}`),
+    h("p", { class: "sub" }, fem ? "Provisional reference points for girls and women: girls' youth data for broad jump, push-ups and plank; the other tests are estimated from the boys' values. Replace with SLC's own women's data over time."
+      : "Provisional reference points for boys, from published youth data where it exists. Replace with SLC's own data over time."),
     h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Test", "Developing", "Expected", "Strong", "Source"].map((c) => h("th", {}, c)))),
       h("tbody", {}, n.tests.map((t) => { const a = t.ages[ag] || t.ages.U15;
         return h("tr", {}, h("td", {}, `${t.label} (${t.unit})`), h("td", {}, a.developing), h("td", {}, h("strong", {}, a.expected)), h("td", {}, a.strong),
@@ -1779,7 +1788,7 @@ function areaTable(cat) {
 }
 const GOAL_CHIP = { focus: "warn", improve: "info", keep: "ok" };
 
-// ───────────── SLC U15 points benchmark (app/benchmark.py) ─────────────
+// ───────────── SLC U15 points benchmark (app/assessment/benchmark.py) ─────────────
 const BENCH_CLS = { green: "bm-green", light_green: "bm-light", amber: "bm-amber", red: "bm-red" };
 function benchChip(b) {
   if (!b) return "–";
@@ -1804,8 +1813,11 @@ function benchmarkCard(b) {
 
 function benchmarkRefCard(t) {
   const lim = Math.max(...t.tests.map((x) => x.max));
-  return h("details", { class: "card" }, h("summary", {}, `SLC U15 benchmark · points per test (max ${t.max})`),
-    h("p", { class: "sub" }, `From the SLC men's / U19 points system: shared tests (2 km, 20 m, 5-10-5) use the U19 cut-offs × ${t.age_factor}; ` +
+  const fem = t.gender === "female";
+  return h("details", { class: "card" }, h("summary", {}, `SLC ${t.label || "U15"} benchmark · points per test (max ${t.max})`),
+    h("p", { class: "sub" }, fem ? "Women's version (no SLC women's standard yet): the same tests, points and colour bands; 1 point at the age group's expected value, " +
+      "full points at about the 93rd percentile, equal steps between. A proposal: replace with SLC's women's standards."
+      : `From the SLC men's / U19 points system: shared tests (2 km, 20 m, 5-10-5) use the U19 cut-offs × ${t.age_factor}; ` +
       "CMJ → broad jump, IMTP → push-ups and inverted row, skinfolds → plank. A proposal: replace with SLC's own U15 data."),
     h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Test", ...Array.from({ length: lim }, (_, i) => `${lim - i} pts`)].map((c) => h("th", {}, c)))),
       h("tbody", {}, t.tests.map((x) => h("tr", {}, h("td", {}, `${x.label} (${x.unit}, ${x.better} is better)`),
@@ -2073,7 +2085,7 @@ async function planPanel(p, host, window) {
 function logForm(p, plan, done) {
   const phase = plan.progress.current_phase;
   const ph = plan.phases.find((x) => x.phase === phase) || plan.phases[0];
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayStr();
   const date = h("input", { type: "date", value: today, max: today });
   const minutes = h("input", { type: "number", min: 1, max: 300, placeholder: "e.g. 40" }), rpe = h("input", { type: "number", min: 1, max: 10, placeholder: "1-10" });
   const rows = [];
@@ -2109,7 +2121,7 @@ async function roleSkillsCard(p, host, kind = "development") {
   let d;
   try { d = await api(`/players/${p.id}/role-skills?kind=${kind}`); } catch (x) { return host.replaceChildren(h("h2", {}, "Role skills"), h("p", { class: "sub" }, x.message)); }
   const canEdit = can("coach", "sc_coach", "admin");
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayStr();
   const date = h("input", { type: "date", value: today, max: today, "aria-label": "Assessment date" });
   const rows = [];
   const opts = [["", "–"], ...Object.entries(d.legend)];
@@ -2143,7 +2155,7 @@ async function pdpCard(p, host) {
   let d;
   try { d = await api(`/players/${p.id}/pdp`); } catch (x) { return host.replaceChildren(h("h2", {}, "Development ratings (PDP)"), h("p", { class: "sub" }, x.message)); }
   const canEdit = can("coach", "sc_coach", "admin");
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayStr();
   const date = h("input", { type: "date", value: today, max: today, "aria-label": "Rating date" });
   const sels = [];
   const paint = (s) => { s.className = "rate" + (s.value ? " r" + s.value : ""); };
@@ -2643,11 +2655,13 @@ function bodyExtrasCard(ex) {
     h("div", { class: "row" },
       Charts.stat({ label: "Sum of 8 skinfolds", value: ex.skinfold_sum == null ? "–" : ex.skinfold_sum.toFixed(1) + " mm",
         sub: ex.skinfold_sum == null ? `${sf.length} of 8 sites measured` : ex.third_needed ? `3rd measure needed at ${ex.third_needed} site(s)` : "lower = leaner" }),
-      Charts.stat({ label: "Sit and reach", value: ex.sit_reach ? fmt(ex.sit_reach.final, 1) + " cm" : "–", sub: ex.sit_reach ? "best of 3" : "not tested" })),
+      Charts.stat({ label: "Sit and reach", value: ex.sit_reach ? fmt(ex.sit_reach.final, 1) + " cm" + (ex.sit_reach_copied ? " *" : "") : "–",
+        sub: ex.sit_reach ? (ex.sit_reach_copied ? "copied, not measured" : "best of 3") : "not tested" })),
     sf.length ? h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Site", "T1", "T2", "T3", "Final (mm)"].map((c) => h("th", {}, c)))),
       h("tbody", {}, ex.skinfolds.map((x) => h("tr", {}, h("td", {}, x.label), x.trials.map((v) => h("td", {}, fmt(v, 1))),
         h("td", { class: x.third_needed ? "down" : "" }, x.final == null ? "–" : x.final.toFixed(1) + (x.third_needed ? " · take a 3rd" : ""))))))) : null,
-    ex.copied.length ? h("p", { class: "hint warn" }, ex.copied.join(". ") + ". Measure this player and enter the real values when possible.") : null);
+    ex.copied.length || ex.sit_reach_copied ? h("p", { class: "hint warn" }, [...ex.copied, ex.sit_reach_copied ? `Sit and reach: ${ex.sit_reach_copied}` : null]
+      .filter(Boolean).join(". ") + ". Measure this player and enter the real values when possible.") : null);
 }
 
 // the squad's skinfold record and sit and reach (Tests page), in the layout of the skinfold sheet
@@ -2674,7 +2688,7 @@ async function bodyTestsCard(host, window, canEdit) {
           h("td", {}, r.squad_no ?? "–"), h("td", {}, r.name + (r.copied.length ? " *" : "")), h("td", {}, fmt(r.weight_kg, 1)),
           r.skinfolds.map((x) => h("td", { class: x.third_needed ? "down" : "" }, x.final == null ? "" : x.final.toFixed(1))),
           h("td", {}, h("strong", {}, r.skinfold_sum == null ? "–" : r.skinfold_sum.toFixed(1))), h("td", {}, r.third_needed),
-          h("td", {}, r.sit_reach ? fmt(r.sit_reach.final, 1) : "–")));
+          h("td", { title: (r.sit_reach && r.sit_reach.note) || null }, r.sit_reach ? fmt(r.sit_reach.final, 1) + ((r.sit_reach.note || "").startsWith("Copied from") ? " *" : "") : "–")));
         return rows;
       })))),
     d.players.some((r) => r.copied.length) ? h("p", { class: "hint warn" }, "* Not measured: values copied from the comparison player the coach chose (hover the row to see who). Measure and replace them when possible.") : null,
@@ -2755,11 +2769,12 @@ async function testingTab() {
       Charts.hbars({ ariaLabel: "Players per focus area", format: (v) => `${v} player${v === 1 ? "" : "s"}`,
         data: focus.map(([label, v]) => ({ label, value: v, cls: "c-s2" })), empty: "No focus areas yet." })));
   main.insertBefore(charts, table);
-  api("/meta/benchmark").then((b) => main.append(benchmarkRefCard(b))).catch(() => {});
-  api("/meta/age-norms").then((n) => main.append(ageNormsCard(n, S.squad.age_group || "U15"))).catch(() => {});
+  const gq = `gender=${c.gender || "male"}&age_group=${encodeURIComponent(S.squad.age_group || "U15")}`;
+  api(`/meta/benchmark?${gq}`).then((b) => main.append(benchmarkRefCard(b))).catch(() => {});
+  api(`/meta/age-norms?${gq}`).then((n) => main.append(ageNormsCard(n, S.squad.age_group || "U15"))).catch(() => {});
   table.replaceChildren(h("h2", {}, `Categories · ${c.window_label}`),
     h("p", { class: "sub" }, `Ranked within the same level only. A band needs ${c.min_cohort}+ players of a level.`),
-    h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Player", "Level", "Band", "Score", "U15 points", "Focus areas", "Readiness"].map((x) => h("th", {}, x)))),
+    h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["Player", "Level", "Band", "Score", `${c.ref_label || "U15"} points`, "Focus areas", "Readiness"].map((x) => h("th", {}, x)))),
       h("tbody", {}, c.players.map((r) => h("tr", { class: "click", onclick: () => { S.pid = r.player_id; S.from = S.tab; go("players"); } },
         h("td", {}, r.player), h("td", {}, r.level_label || "Not tested"), h("td", {}, r.band ? bandChip(r) : "–"), h("td", {}, r.overall ?? "–"),
         h("td", {}, benchChip(r.benchmark)),

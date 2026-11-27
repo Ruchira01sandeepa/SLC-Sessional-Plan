@@ -3,12 +3,12 @@ from datetime import date
 
 import pytest
 
-from app.annual_grid import build_grid
-from app.individual_plan import build_individual_plan
-from app.player_profile import build_profile, growth, physical_goal, training_age
-from app.season_phases import suggest_phases
-from app.test_battery import AREA_LABEL, BY_KEY, SUPER, areas_for
-from app.models import PdpRubricItem, Player, PlayerRole, Gender, Screening, NeedsAnalysisItem, UserRole
+from app.planning.annual_grid import build_grid
+from app.planning.individual_plan import build_individual_plan
+from app.planning.player_profile import build_profile, growth, physical_goal, training_age
+from app.planning.season_phases import suggest_phases
+from app.assessment.test_battery import AREA_LABEL, BY_KEY, SUPER, areas_for
+from app.core.models import PdpRubricItem, Player, PlayerRole, Gender, Screening, NeedsAnalysisItem, UserRole
 from .conftest import login, make_user
 
 READY = {"status": "ready", "label": "Ready", "reason": "ok"}
@@ -247,7 +247,7 @@ WEAKEST_TEST = {"endurance": "run_2km", "power": "broad_jump", "upper_strength":
 
 @pytest.mark.parametrize("area", list(WEAKEST_TEST))
 def test_every_weak_area_gets_work_in_every_phase(area):
-    from app.individual_plan import AREA_KINDS, MAIN_KINDS
+    from app.planning.individual_plan import AREA_KINDS, MAIN_KINDS
     p = plan(pcts={WEAKEST_TEST[area]: 8.0})
     for ph in p["phases"]:
         a = next(x for x in ph["areas"] if x["area"] == area)

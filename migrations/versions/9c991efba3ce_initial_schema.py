@@ -9,7 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-import app.security  # EncryptedJSON
+import app.core.security  # EncryptedJSON
 
 
 # revision identifiers, used by Alembic.
@@ -262,10 +262,10 @@ def upgrade() -> None:
     op.create_table('player_medical',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('player_id', sa.Integer(), nullable=False),
-    sa.Column('current_health', app.security.EncryptedJSON(), nullable=True),
-    sa.Column('injury_history', app.security.EncryptedJSON(), nullable=True),
-    sa.Column('reports', app.security.EncryptedJSON(), nullable=True),
-    sa.Column('injured_body_parts', app.security.EncryptedJSON(), nullable=True),
+    sa.Column('current_health', app.core.security.EncryptedJSON(), nullable=True),
+    sa.Column('injury_history', app.core.security.EncryptedJSON(), nullable=True),
+    sa.Column('reports', app.core.security.EncryptedJSON(), nullable=True),
+    sa.Column('injured_body_parts', app.core.security.EncryptedJSON(), nullable=True),
     sa.Column('updated_by', sa.Integer(), nullable=True),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
     sa.ForeignKeyConstraint(['player_id'], ['players.id'], ondelete='CASCADE'),
@@ -352,7 +352,7 @@ def upgrade() -> None:
     sa.Column('sleep_hours', sa.Float(), nullable=True),
     sa.Column('recovery', sa.Integer(), nullable=True),
     sa.Column('pain_flag', sa.Boolean(), nullable=False),
-    sa.Column('pain_detail', app.security.EncryptedJSON(), nullable=True),
+    sa.Column('pain_detail', app.core.security.EncryptedJSON(), nullable=True),
     sa.ForeignKeyConstraint(['player_id'], ['players.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('player_id', 'log_date')

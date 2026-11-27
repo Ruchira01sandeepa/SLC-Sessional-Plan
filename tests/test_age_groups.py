@@ -1,16 +1,16 @@
-"""U15 and U17 squads in one system: each squad's age group picks its rules (app/age_groups.py)."""
+"""U15 and U17 squads in one system: each squad's age group picks its rules (app/reference/age_groups.py)."""
 from datetime import date, timedelta
 
 import pytest
 
-from app import workload_rules as wr
-from app.age_groups import PROFILES, check_dob, profile
-from app.annual_grid import build_grid
-from app.load_distribution import build_loads
-from app.plan_load import verify
-from app.season_phases import suggest_phases
-from app.seasonal_plan import workload_rules_for
-from app.models import Squad, UserRole
+from app.workload import workload_rules as wr
+from app.reference.age_groups import PROFILES, check_dob, profile
+from app.planning.annual_grid import build_grid
+from app.planning.load_distribution import build_loads
+from app.workload.plan_load import verify
+from app.planning.season_phases import suggest_phases
+from app.planning.seasonal_plan import workload_rules_for
+from app.core.models import Squad, UserRole
 from .conftest import login, make_user
 
 TODAY = date.today()

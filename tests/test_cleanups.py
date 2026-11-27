@@ -5,12 +5,12 @@ from datetime import date, timedelta
 import openpyxl
 from openpyxl import Workbook
 
-from app.annual_grid import build_grid
-from app.annual_grid_excel import R_LOADING_HEAD, R_SECTION, layout, write_annual_sheet
-from app.exercises import bowling_types
-from app.models import EventType, WellnessLog, WorkloadLog
-from app.season_phases import suggest_phases
-from app.workload_service import evaluate_player, evaluate_players, today_lk
+from app.planning.annual_grid import build_grid
+from app.exports.excel.annual_grid_excel import R_LOADING_HEAD, R_SECTION, layout, write_annual_sheet
+from app.reference.exercises import bowling_types
+from app.core.models import EventType, WellnessLog, WorkloadLog
+from app.planning.season_phases import suggest_phases
+from app.workload.workload_service import evaluate_player, evaluate_players, today_lk
 
 
 def test_bowling_types_parsing_is_shared():
@@ -54,8 +54,8 @@ def test_annual_sheet_layout_matches_the_supplied_rows_and_never_overlaps():
 
 def test_batched_evaluation_matches_one_by_one(client, world, db):
     today = today_lk()
-    bob = db.get(__import__("app.models", fromlist=["Player"]).Player, world["bob"])
-    ann = db.get(__import__("app.models", fromlist=["Player"]).Player, world["ann"])
+    bob = db.get(__import__("app.core.models", fromlist=["Player"]).Player, world["bob"])
+    ann = db.get(__import__("app.core.models", fromlist=["Player"]).Player, world["ann"])
     for d in range(1, 30):
         db.add(WorkloadLog(player_id=bob.id, log_date=today - timedelta(days=d), session_type=EventType.training, attended=True,
                            duration_min=60 + d, rpe=5 + d % 3, overs_bowled=6.0 if d % 4 == 0 else None))

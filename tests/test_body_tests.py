@@ -4,8 +4,8 @@ import io
 import openpyxl
 import pytest
 
-from app.test_battery import BY_KEY, SIT_REACH, SUPER, parse_skinfold, skinfold_final, skinfold_sum
-from app.test_import import columns, parse_workbook, skinfold_header, trial_header
+from app.assessment.test_battery import BY_KEY, SIT_REACH, SUPER, parse_skinfold, skinfold_final, skinfold_sum
+from app.importers.test_import import columns, parse_workbook, skinfold_header, trial_header
 from tests.test_testing import H, fill, get_template, make_season, upload
 
 

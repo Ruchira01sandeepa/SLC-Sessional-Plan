@@ -4,9 +4,9 @@ from datetime import date
 
 import openpyxl
 
-from app import sc_periodization as scp
-from app.exercise_kinds import PHASE_KINDS
-from app.season_phases import suggest_phases
+from app.planning import sc_periodization as scp
+from app.reference.exercise_kinds import PHASE_KINDS
+from app.planning.season_phases import suggest_phases
 from .test_testing import add_players, fill, get_template, good_row, make_season, upload
 
 H = lambda w, who: w["h"][who]

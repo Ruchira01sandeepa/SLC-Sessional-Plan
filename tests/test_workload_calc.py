@@ -5,8 +5,8 @@ from datetime import date, timedelta
 import openpyxl
 import pytest
 
-from app import workload_calc as wc
-from app.workload_service import today_lk
+from app.workload import workload_calc as wc
+from app.workload.workload_service import today_lk
 
 H = lambda w, who: w["h"][who]
 MON = date(2027, 1, 11)

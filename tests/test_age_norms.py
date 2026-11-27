@@ -1,9 +1,9 @@
 """Age-group references for the physical tests (U15 / U17 / U19): labels, typo ranges, and how they personalise the plan."""
 import pytest
 
-from app.age_norms import AGE_GROUPS, PLAUSIBLE, REFERENCE, age_band, plausible, reference
-from app.player_profile import build_profile, physical_goal
-from app.test_battery import BY_KEY, AREA_LABEL, SUPER, areas_for, parse_value
+from app.assessment.age_norms import AGE_GROUPS, PLAUSIBLE, REFERENCE, age_band, plausible, reference
+from app.planning.player_profile import build_profile, physical_goal
+from app.assessment.test_battery import BY_KEY, AREA_LABEL, SUPER, areas_for, parse_value
 from .test_personal_plan import grid, plan as make_plan
 
 
@@ -32,7 +32,8 @@ def test_bands_follow_the_age_group(key, value, age, band):
 
 def test_scores_and_unknowns():
     assert age_band("pushups", 20, "U15")["score"] == 50.0 and age_band("pushups", 28, "U15")["score"] == 75.0
-    assert age_band("pushups", 20, "U15", "female") is None and reference("pushups", "U15", "female") is None   # no girls' references set
+    assert reference("pushups", "U15", "female") == (6, 10, 15)                                                 # girls' own references
+    assert age_band("pushups", 20, "U15", "female")["band"] == "strong" and age_band("pushups", 20, "U15")["band"] == "on_track"
     assert age_band("pushups", None, "U15") is None
     assert age_band("pushups", 20, "U99")["age_group"] == "U15"                                                   # unknown -> U15
     assert age_band("bronco", 300, "U19")["quality"] == "estimate"
@@ -70,7 +71,7 @@ def test_small_squad_still_gets_a_personal_profile_from_age_references():
 
 
 def test_unranked_player_now_gets_exercises_goals_and_a_note():
-    from app.individual_plan import build_individual_plan
+    from app.planning.individual_plan import build_individual_plan
     p = build_individual_plan(player={"name": "P", "role": "batter", "gender": "male"}, cat=_unranked(GOOD_U15),
                               ready={"status": "ready", "label": "Ready", "reason": ""}, g=grid("U15"), extra={"window": "baseline"})
     core = next(a for a in p["phases"][0]["areas"] if a["area"] == "core")

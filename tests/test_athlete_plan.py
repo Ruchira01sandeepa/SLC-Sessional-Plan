@@ -4,7 +4,7 @@ from datetime import date, timedelta
 
 import openpyxl
 
-from app import athlete_season_plan as asp
+from app.planning import athlete_season_plan as asp
 from .test_testing import add_players, fill, get_template, good_row, make_season, upload
 
 H = lambda w, who: w["h"][who]

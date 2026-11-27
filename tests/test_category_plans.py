@@ -4,7 +4,7 @@ import io
 import openpyxl
 import pytest
 
-from app.category_plans import CATEGORIES, HEAVY_LEGS, INJURY_KINDS, MAX_MAIN, build_category_plans
+from app.planning.category_plans import CATEGORIES, HEAVY_LEGS, INJURY_KINDS, MAX_MAIN, build_category_plans
 from .test_personal_plan import plan as make_plan
 from .test_plan_versions import setup  # noqa: F401  (fixture)
 

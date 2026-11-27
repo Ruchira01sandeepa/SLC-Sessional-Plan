@@ -5,8 +5,8 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
-from app.models import (FitnessTest, PdpRubricItem, PlayerRole, Scenario, SkillTemplate, TemplateKind, FitnessPhase)
-from app.seed_templates import TEMPLATE_DIR, WORKBOOKS, seed, _s
+from app.core.models import (FitnessTest, PdpRubricItem, PlayerRole, Scenario, SkillTemplate, TemplateKind, FitnessPhase)
+from app.reference.seed_templates import TEMPLATE_DIR, WORKBOOKS, seed, _s
 
 DEV, ADP_P, ADP_S, PSK, PTK = (TemplateKind.development, TemplateKind.adaptability_primary,
                                TemplateKind.adaptability_secondary, TemplateKind.progress_skill, TemplateKind.progress_task)
@@ -70,7 +70,7 @@ def test_pdp_rubric_matches_workbook_layout(db, seeded):
 
 
 def _season(db, squad_id):
-    from app.models import Season
+    from app.core.models import Season
     s = Season(squad_id=squad_id, name="2026/27", start_date=dt.date(2026, 9, 1), end_date=dt.date(2027, 6, 30))
     db.add(s)
     db.commit()
@@ -98,7 +98,7 @@ def test_fitness_requires_a_season(db, world):
 
 
 def test_foreign_keys_are_enforced(db):
-    from app.models import Player, Gender
+    from app.core.models import Player, Gender
     db.add(Player(full_name="Ghost", squad_id=9999, role=PlayerRole.batter, gender=Gender.male, date_of_birth=dt.date(2012, 1, 1)))
     with pytest.raises(IntegrityError):
         db.commit()
@@ -106,7 +106,7 @@ def test_foreign_keys_are_enforced(db):
 
 
 def test_deleting_a_player_removes_their_medical_and_fitness_rows(db, world):
-    from app.models import Player, PlayerMedical
+    from app.core.models import Player, PlayerMedical
     db.add(PlayerMedical(player_id=world["ann"], current_health={"text": "x"}))
     db.add(FitnessTest(player_id=world["ann"], season_id=_season(db, world["squad_a"]).id,
                        phase=FitnessPhase.baseline, test_date=dt.date(2026, 9, 5)))
@@ -118,7 +118,7 @@ def test_deleting_a_player_removes_their_medical_and_fitness_rows(db, world):
 
 
 def test_age_is_computed_from_dob(db, world):
-    from app.models import Player
+    from app.core.models import Player
     p = db.get(Player, world["ann"])
     t = dt.date.today()
     assert p.age == t.year - 2012 - ((t.month, t.day) < (6, 1))
@@ -127,7 +127,7 @@ def test_age_is_computed_from_dob(db, world):
 def test_placeholder_secrets_give_a_clear_error_not_a_crash_deep_in_the_app():
     import pytest as _p
     from pydantic import ValidationError
-    from app.config import Settings
+    from app.core.config import Settings
     with _p.raises(ValidationError, match="make_env"):
         Settings(medical_key="CHANGE-ME-fernet-key")
     with _p.raises(ValidationError, match="make_env"):
@@ -138,12 +138,12 @@ def test_placeholder_secrets_give_a_clear_error_not_a_crash_deep_in_the_app():
 def test_make_env_writes_a_loadable_env(tmp_path, monkeypatch):
     import runpy
     import pytest
-    from app.config import Settings
+    from app.core.config import Settings
     default_key = Settings().medical_key                      # captured BEFORE the new .env exists
     monkeypatch.chdir(tmp_path)
-    runpy.run_module("scripts.make_env", run_name="__main__")
+    runpy.run_module("scripts.admin.make_env", run_name="__main__")
     lines = dict(l.split("=", 1) for l in (tmp_path / ".env").read_text().splitlines())
     assert len(lines["SLC_JWT_SECRET"]) >= 32 and lines["SLC_MEDICAL_KEY"] != default_key
     Settings(jwt_secret=lines["SLC_JWT_SECRET"], medical_key=lines["SLC_MEDICAL_KEY"])     # both accepted by validation
     with pytest.raises(SystemExit):
-        runpy.run_module("scripts.make_env", run_name="__main__")                           # second run refuses to overwrite
+        runpy.run_module("scripts.admin.make_env", run_name="__main__")                           # second run refuses to overwrite

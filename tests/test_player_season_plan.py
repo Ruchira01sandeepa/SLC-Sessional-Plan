@@ -4,9 +4,9 @@ from datetime import date
 
 import openpyxl
 
-from app.annual_grid import build_grid
-from app.player_season_plan import personal_grid
-from app.seasonal_workbook import SHEETS, build_seasonal_workbook
+from app.planning.annual_grid import build_grid
+from app.planning.player_season_plan import personal_grid
+from app.exports.excel.seasonal_workbook import SHEETS, build_seasonal_workbook
 H = lambda w, who: w["h"][who]
 
 PHASES = [{"phase_type": "pre_season", "start_date": date(2027, 1, 1), "end_date": date(2027, 5, 31)},
@@ -120,6 +120,6 @@ def test_tournament_rows_are_filled_and_personal():
     assert all(row(weak, "Physical", "Speed")[i] for i in between) and not any(row(ok, "Physical", "Speed")[i] for i in between)
     matchday = [i for i, k in enumerate(d["day_kind_keys"]) if k == "match"]
     assert not any(row(weak, "Physical", "Speed")[i] for i in matchday)                           # never extra work on a match day
-    from app.load_distribution import STRIDES, build_interval_loads
+    from app.planning.load_distribution import STRIDES, build_interval_loads
     ld = build_interval_loads(d)
     assert all(ld["speed_100m"][i] == STRIDES for i in between) and not any(ld["total"])         # strides, no interval conditioning

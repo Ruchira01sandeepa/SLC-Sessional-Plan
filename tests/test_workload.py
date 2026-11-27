@@ -4,9 +4,9 @@ from datetime import timedelta
 
 import pytest
 
-from app import workload_rules as wr
-from app.models import PlayerMedical
-from app.workload_service import today_lk
+from app.workload import workload_rules as wr
+from app.core.models import PlayerMedical
+from app.workload.workload_service import today_lk
 
 H = lambda w, who: w["h"][who]
 TODAY = today_lk()
@@ -363,7 +363,7 @@ def test_overview(client, world):
 
 
 def test_unavailable_player_session_alert(client, world, db):
-    from app.models import Availability, Player
+    from app.core.models import Availability, Player
     p = db.get(Player, world["bob"]); p.availability = Availability.unavailable; db.commit()
     r = post_log(client, world, "coach_a", world["bob"])
     assert any(a["rule_code"] == "UNAVAILABLE_SESSION" for a in r.json()["open_alerts"])

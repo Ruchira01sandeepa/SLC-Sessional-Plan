@@ -9,26 +9,62 @@ Run each line separately (Windows PowerShell does not understand `&&`):
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1          # if blocked: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 python -m pip install -r requirements.txt
-python -m scripts.make_env                 # creates .env with fresh random keys (do NOT copy .env.example)
+python -m scripts.admin.make_env           # creates .env with fresh random keys (do NOT copy .env.example)
 alembic upgrade head                       # create the tables
 python -m scripts.seed_templates           # load skills / rubric / scenarios from templates\*.xlsx
-python -m scripts.create_admin you@example.com "Your Name"
+python -m scripts.admin.create_admin you@example.com "Your Name"
 python -m uvicorn app.main:app --reload    # then open http://localhost:8000/
 ```
-Optional demo squad (empty database only): `python -m scripts.demo_data` (password `Demo-Pass-2026`).
+Optional demo squad (empty database only): `python -m scripts.dev.demo_data` (password `Demo-Pass-2026`).
 Tests: `python -m pytest`.
 
 ## Run it - Linux / macOS
 ```bash
 python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
-python -m scripts.make_env
+python -m scripts.admin.make_env
 alembic upgrade head
 python -m scripts.seed_templates
-python -m scripts.create_admin you@example.com "Your Name"
+python -m scripts.admin.create_admin you@example.com "Your Name"
 python -m uvicorn app.main:app --reload    # API docs at http://localhost:8000/docs, app at /
-python -m pytest                           # 93 tests
+python -m pytest                           # the full test suite
 ```
-Browser smoke test (optional, needs playwright): `python -m scripts.ui_smoke <outdir>`.
+Browser smoke test (optional, needs playwright): `python -m scripts.dev.ui_smoke <outdir>`.
+
+## Project structure
+```
+slc-u15/
+├── app/                      the web application (FastAPI)
+│   ├── main.py               creates the app: routers, the web UI at /ui, branding, health check
+│   ├── core/                 settings, database, models and schemas, security, permissions, request
+│   │                         dependencies, file paths, the Sri Lanka clock
+│   ├── api/                  HTTP API: one router per area (auth, admin, players, squads, calendar,
+│   │                         screening, fitness, testing, plans, plan versions, workload, ...)
+│   ├── assessment/           physical tests: the SOP battery, age-group references (boys and girls /
+│   │                         women), the SLC benchmark, categories, progress, screening
+│   ├── workload/             workload rules and calculations, the alerts service, earlier and planned load
+│   ├── planning/             annual grid, seasonal, weekly, individual, periodized and S&C plans,
+│   │                         the player profile behind them
+│   ├── reference/            exercises, role skills and KPIs, age groups, Sri Lankan holidays, template seeding
+│   ├── importers/            Excel imports: squad sheets, SOP test results
+│   ├── exports/
+│   │   ├── excel/            every Excel workbook the app produces
+│   │   └── pdf/              player plan PDFs, the squad test results summary
+│   ├── static/               the web UI (HTML, JS, CSS, brand logo)
+│   └── data/                 the exercise library (JSON)
+├── migrations/               Alembic database migrations
+├── scripts/
+│   ├── seed_templates.py     loads skills, rubric and scenarios (runs at every deploy)
+│   ├── admin/                first administrator, passwords, the .env file
+│   └── dev/                  demo data, exercise library build, browser smoke checks
+├── tests/                    the test suite (pytest)
+├── docs/                     design notes: test battery, age references, annual plan grid, data model
+├── templates/                the PDP workbooks the seeder reads
+├── data/source/              the supplied exercise list (source of app/data)
+├── backups/                  local database backups (not in git)
+└── render.yaml               deployment (Render)
+```
+Each `app/` folder holds one area of the system, so a change to, say, the workload rules stays inside `app/workload/`.
+Files are found through `app/core/paths.py`, never relative to a module's own location.
 
 ## Before real use (required)
 * `SLC_JWT_SECRET` and `SLC_MEDICAL_KEY` **must** be replaced; the built-in values are for development only.
@@ -37,7 +73,7 @@ Browser smoke test (optional, needs playwright): `python -m scripts.ui_smoke <ou
 * Use PostgreSQL (`SLC_DATABASE_URL=postgresql+psycopg://...`) and serve over HTTPS.
 
 ## Who can see what
-See `app/permissions.py`: one table, readable in a minute. Summary: players see only themselves; coaches / S&C / physio see only their assigned squads; **only physios** read medical detail; admins manage users and squads but cannot read medical detail. Every medical read, write and denied attempt is audited.
+See `app/core/permissions.py`: one table, readable in a minute. Summary: players see only themselves; coaches / S&C / physio see only their assigned squads; **only physios** read medical detail; admins manage users and squads but cannot read medical detail. Every medical read, write and denied attempt is audited.
 
 ## Phase 2 notes
 * Fitness results are compared only with the player's own baseline, personal targets, coach benchmarks and squad peers (percentile shown once 5+ players are tested). No adult standards are applied.
@@ -52,20 +88,20 @@ See `app/permissions.py`: one table, readable in a minute. Summary: players see 
 - **Admin tab**: users, squads, squad staff, season phases.
 - **Seasonal plan tab**: pick the player groups, review the plan, Save plan (to track status and coach review), Download Excel.
 - **Role-specific measures** (from the role development sheets) are entered on the fitness form and shown in progress.
-- **Exercise library** comes from `data/source/exercise_library.txt`; rebuild with `python -m scripts.build_exercise_library`.
-- Smoke tests: `python -m scripts.ui_smoke_admin <dir>` (admin-only server on port 8765 with demo data).
+- **Exercise library** comes from `data/source/exercise_library.txt`; rebuild with `python -m scripts.dev.build_exercise_library`.
+- Smoke tests: `python -m scripts.dev.ui_smoke_admin <dir>` (admin-only server on port 8765 with demo data).
 
 ## Phase 3: workload and safety
 
 - **Workload tab** (admin, coach, S&C, physio): squad overview, open alerts with "Mark seen". Open a player to log sessions, daily wellness, check a planned session, or set bowling limits.
-- **Rules** (`app/workload_rules.py`, one file, fully tested; `GET /workload/rules` lists the numbers):
+- **Rules** (`app/workload/workload_rules.py`, one file, fully tested; `GET /workload/rules` lists the numbers):
   - Fast bowlers: 5 overs a spell, 16 a match day (caution at 12, the Cricket Australia level for ages 13 to 15), 3 bowling days in 7, a non-bowling day after every bowling day. These come from the project brief and are **provisional until SLC / provincial approval**.
   - Spin bowlers, all-rounders, batters and keepers have no automatic limits until a coach sets them for that player.
   - Load = RPE x minutes. Load ratio = last 7 days / 4-week average (needs 3 weeks of logs). Flags at 1.3 and 1.5, a 30% rise on last week, no rest day, very uniform days. These are rules of thumb, not proven cut-offs for children.
   - Wellness: pain flag (stop), soreness or fatigue 8+ (warning), low sleep (note). Alerts never contain medical detail.
   - Next-week load guidance is a suggested range for the coach to confirm, adjusted by season phase.
 - Players never see alerts or guidance. Existing database: run `alembic upgrade head`.
-- Browser check: `python -m scripts.ui_smoke_workload <dir>`.
+- Browser check: `python -m scripts.dev.ui_smoke_workload <dir>`.
 
 ## Annual plan grid
 Seasonal plan tab > "Download plan workbook" gives the 4-part workbook (annual plan, load distribution, component distribution, session plans). See `docs/ANNUAL_PLAN_GRID.md`.
@@ -86,7 +122,7 @@ See `docs/TESTING_BATTERY.md`. Run `alembic upgrade head` to add the new tables.
 
 ## U15 and U17 squads
 Every squad has an age group (**U15** or **U17**), chosen when an administrator creates it (Admin > New squad > Age group).
-Everything that depends on age follows the squad, from one file: `app/age_groups.py`.
+Everything that depends on age follows the squad, from one file: `app/reference/age_groups.py`.
 
 | | U15 | U17 |
 |---|---|---|
@@ -95,14 +131,14 @@ Everything that depends on age follows the squad, from one file: `app/age_groups
 | Planned load peak (annual plan) | 90% | 93% |
 | Physical tests | SLC National U15 SOP | the U15 SOP until an U17 SOP exists |
 
-- **The U17 numbers are placeholders, not SLC rules.** They follow published junior fast-bowling guidance for 16-17 year-olds and are shown as provisional in the app (Overview banner, workload rules, seasonal plan). Confirm them with SLC and edit `app/age_groups.py`; nothing else needs to change.
+- **The U17 numbers are placeholders, not SLC rules.** They follow published junior fast-bowling guidance for 16-17 year-olds and are shown as provisional in the app (Overview banner, workload rules, seasonal plan). Confirm them with SLC and edit `app/reference/age_groups.py`; nothing else needs to change.
 - A coach can still set stricter (or different) limits for one player; those override the age-group defaults.
 - A player cannot be added to, or moved into, a squad whose age range they do not fit.
 - Existing squads are U15 (the column already existed), so no migration is needed. Add U19 later by adding one entry to `PROFILES`.
 
 ## Personal plans: every player gets their own plan
 Player page > Physical tests > **Show individual plan** (and **Download plan (Excel)**, which now opens with a one-page *Player plan* sheet).
-The plan is built from the player's own profile (`app/player_profile.py`, `app/individual_plan.py`):
+The plan is built from the player's own profile (`app/planning/player_profile.py`, `app/planning/individual_plan.py`):
 
 | Input | Where it comes from | What it changes |
 |---|---|---|
@@ -121,7 +157,7 @@ Evidence used: NSCA long-term athletic development position statement (Lloyd et 
 - **Plan in use:** the newest saved version for the season (or a freshly generated plan until one is saved). *Regenerate from latest data* builds a fresh plan with the newest tests, ratings and logs; save it to make it the plan in use.
 - **Edit plan:** swap an exercise for one of that area's alternatives (only work the phase allows), add or remove exercises, change reps and sets, adjust goal targets and dates, add a coach note. Every change previews at once; **Save as new version** keeps it (versions 1, 2, 3... with who and when; the Excel export is the version in use).
 - **Log a focus session:** tick what was done, sets and reps (pre-filled with the current dose), technique good, pain. Minutes and RPE also add it to the workload.
-- **Automatic progression** (`app/plan_progress.py`), per exercise in 14-day blocks: 2+ sessions with good technique, the reps done and no pain add one rep (one set once the reps are at the target); pain steps back at once and refers to the physiotherapist; anything else holds, with the reason. Readiness Caution or Hold stops progression.
+- **Automatic progression** (`app/planning/plan_progress.py`), per exercise in 14-day blocks: 2+ sessions with good technique, the reps done and no pain add one rep (one set once the reps are at the target); pain steps back at once and refers to the physiotherapist; anything else holds, with the reason. Readiness Caution or Hold stops progression.
 - **Role skills** card (player page): the Development / Adaptability / Progress grids from the workbooks. *Have to improve* becomes goals and matched drills in the plan; *Good*, *Naturally good*, *Complete* are listed as strengths.
 - **Batting and keeping drills** were added (`app/data/extra_drills.json`, marked "added"): the supplied list has none. Edit that file to change them.
 - Existing database: run `alembic upgrade head` (two new tables: plan versions and exercise logs).
@@ -131,5 +167,7 @@ Each test result is also labelled against the player's age group: *Below referen
 (player page, "For age" column; full table on the Tests tab and in `docs/AGE_REFERENCES.md`). Each age group has its own typo-check range
 for imports. When fewer than 5 players of a level are tested, the individual plan places areas against these references instead of
 leaving the player without a plan, and test goals aim at the age group's expected value (never more than 8% in one window).
-Values are provisional (boys only; published youth data where it exists, estimates where it does not) and live in `app/age_norms.py`.
+Values are provisional (published youth data where it exists, estimates where it does not) and live in `app/assessment/age_norms.py`.
+Women's and girls' squads (most players female) use their own references and a women's points benchmark: U15 girls, U17 girls,
+U19 women. Broad jump, push-ups and plank come from girls' youth data; the other tests are estimated from the boys' values.
 Squads can now be U15, U17 or U19 (U19 bowling limits are placeholders like U17).
