@@ -704,6 +704,8 @@ async function fitnessTab() {
       Object.entries(PHASE).map(([k, v]) => h("option", { value: k, selected: k === phase }, v))),
     d.error ? null : h("button", { class: "small", onclick: () => downloadFile(`/squads/${S.squad.id}/seasons/${S.season.id}/test-summary.pdf?window=${phase}`,
       "Test-results-summary.pdf").catch((x) => toast(x.message)) }, "Download summary (PDF)"),
+    d.error ? null : h("button", { class: "small ghost", onclick: () => downloadFile(`/squads/${S.squad.id}/seasons/${S.season.id}/test-summary.docx?window=${phase}`,
+      "Test-results-summary.docx").catch((x) => toast(x.message)) }, "Download summary (Word)"),
     d.error ? null : h("button", { class: "small ghost", onclick: () => window.print() }, "Print page"),
     d.error ? null : h("button", { class: "small ghost", onclick: () => downloadFile(`/squads/${S.squad.id}/seasons/${S.season.id}/physical-report.xlsx?window=${phase}`,
       "physical-report.xlsx").catch((x) => toast(x.message)) }, "Download Excel"));

@@ -67,3 +67,28 @@ def test_copied_sit_and_reach_is_marked_and_cleared_when_measured(client, world)
     assert client.put(url, headers=H(world, "sc_a"), json=body).status_code == 200
     ann = next(p for p in client.get(res, headers=H(world, "coach_a")).json()["players"] if p["player_id"] == world["ann"])
     assert ann["sit_reach"] == 2.0 and ann["sit_reach_copied"] is None
+
+
+def test_summary_word_document(client, world):
+    from io import BytesIO
+
+    from docx import Document
+    sid = make_season(client, world)
+    url = f"/squads/{world['squad_a']}/seasons/{sid}/test-summary.docx?window=baseline"
+    empty = client.get(url, headers=H(world, "coach_a"))
+    assert empty.status_code == 200 and empty.content.startswith(b"PK")                       # a .docx is a zip
+    for pid, sr, bj in ((world["ann"], "-8", "180"), (world["bob"], "12", "215")):
+        assert client.put(f"/players/{pid}/tests/{sid}/baseline", headers=H(world, "sc_a"),
+                          json={"level": "super_provincial", "test_date": "2027-02-01",
+                                "results": {"sit_reach": [sr], "broad_jump": [bj], "sprint_20m": ["3.6"]}}).status_code == 200
+    r = client.get(url, headers=H(world, "coach_a"))
+    assert r.status_code == 200 and r.headers["content-type"].startswith("application/vnd.openxmlformats-officedocument.wordprocessingml")
+    assert r.headers["content-disposition"].endswith('baseline.docx"')
+    doc = Document(BytesIO(r.content))
+    text = "\n".join(p.text for p in doc.paragraphs)
+    for heading in ("Physical Test Results Summary", "Key findings", "Results by test", "Flexibility", "Player overview", "Full results",
+                    "Squad priorities", "Next steps", "Method and notes"):
+        assert heading in text, heading
+    assert len(doc.sections) == 3 and doc.sections[1].page_width > doc.sections[1].page_height          # landscape middle section
+    assert client.get(url, headers=H(world, "coach_b")).status_code in (403, 404)
+    assert client.get(url).status_code == 401
